@@ -82,6 +82,9 @@
     },
     "update-delivery/windows-legacy-migration.mdx": {
       "validatedRevision": "e1aeafa6ba93045765cfc3a92b3d7d94e7833412"
+    },
+    "tool-system/dynamic-mcp.mdx": {
+      "validatedRevision": null
     }
   },
   "convergence": {

@@ -32,7 +32,10 @@ code:
 ## 传输并行生命周期
 
 - stdio 模式：SDK 用 `context.Background()` 跑；信号只让 main 返回，靠进程退出收尾。
-- HTTP 模式：设置 `AGENTDOCK_RUNTIME_ROOT` 时，`httpx.Serve` 与 `desktopcontrol.Serve`
+- HTTP 模式：按 `config.ListenHosts()` 绑定——普通 host 单监听；`lan` 模式解析为回环 +
+  全部私网网段多监听（每地址独立 listener，共享同一 handler）。**先绑定全部地址再开始服务**
+  （任一 bind 失败即启动失败，不留下半监听状态）；关闭时全部 listener 限时 Shutdown。
+- 设置 `AGENTDOCK_RUNTIME_ROOT` 时，`httpx.Serve` 与 `desktopcontrol.Serve`
   **同生命周期并行**，任一退出即 cancel 另一个（禁止后台只剩半套控制面）。
 - 存在配对身份时另起 nexusbridge goroutine；`bridgeWG.Wait()` 必须先于 `Runtime.Close`
   —— Bridge 必须先 drain 再关 Runtime。

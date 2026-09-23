@@ -1,0 +1,100 @@
+---
+description: "接入外部 MCP 服务器（免编译插件）操作指南：mcp_manage 注册 stdio/streamable_http 服务、servers.json 契约、密钥走 env_from_env 与 mcp 环境存储（优先级与 MCP_AUTH_REQUIRED）、<server>:<tool> 三步调用、立即生效不用重启、与内置工具/core-skills/MCP Apps 的边界 / dynamic mcp, plugin, mcp_manage, servers.json, external tools"
+kind: guide
+relations:
+  related:
+    - tool-system/mcp-surface.mdx
+    - tool-system/add-a-tool.mdx
+    - security/env-isolation.mdx
+code:
+  paths:
+    - internal/mcp/client/manager.go
+    - internal/mcp/client/types.go
+    - internal/mcp/client/store.go
+    - internal/mcp/client/protocol.go
+    - internal/app/specs_mcp.go
+    - internal/tool/mcp/service.go
+    - internal/tool/mcp/contract.go
+---
+
+# 接入外部 MCP 服务器（免编译扩展）
+
+## 触发与边界
+
+给 AgentDock 增加外部能力（如把 Creator、ego 等既有工具挂进来）时，**把它们做成独立的
+MCP 进程/服务，运行中注册即可，不需要改 AgentDock 代码再编译**。
+
+何时不用本流程：
+
+- 想要的是与 `read_file` 同级的 **内置工具**（进主工具表、参与统一 schema 防漂移）→
+  走 [add-a-tool](add-a-tool.mdx)，需要写 Go 并编译。
+- 动态 MCP 的工具 **不会** 变成内置工具：调用前多一两步"搜索再调用"是设计代价，
+  换来主工具表体积可控与第三方隔离（见 mcp-surface）。
+- 以下两套机制 **不是插件**，不要混淆：`core-skills/` 只是模型可读的技能文档
+  （skills 主题），不挂 MCP 工具；`internal/mcp/apps.go` 的 MCP Apps 只是结果上的
+  界面卡片（UI 资源），与能力接入无关。
+
+## 注册（mcp_manage，立即生效）
+
+唯一变更入口是内置工具 `mcp_manage`，action：`add | remove | enable | disable |
+list | inspect | refresh | env_set | env_unset | env_list`。
+配置持久化到 `<AgentDockHome>/mcp/servers.json`（带锁的 JSON registry），写入即同步进程内
+注册表，**马上生效，不用重启**；每次调用前还会 re-sync 该文件，外部手工改动也会被拾取。
+
+`action=add` 的字段契约（`internal/mcp/client/types.go` + `store.go:validateServerConfig`）：
+
+| 字段 | 约束 |
+|---|---|
+| `name` | `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`，唯一 |
+| `description` | **必填**（模型靠它决定搜不搜这个服务器） |
+| `transport` | 只有两选一：`stdio` 或 `streamable_http` |
+| `command`/`args`/`cwd` | 仅 stdio；command 必填，cwd 若填必须是绝对路径 |
+| `url` | 仅 streamable_http；http/https 绝对地址，禁止 user info/fragment |
+| `timeout_ms` | 缺省 30000，上限 300000 |
+| `header_env`（HTTP）/ `env_from_env`（stdio） | 密钥引用，见下节；header 不得覆盖保留头（accept/host/mcp-protocol-version 等） |
+| `enabled` | 默认关闭的调用方需显式开启 |
+
+两类传输的字段严格互斥：stdio 配置里出现 `url`/`header_env`、HTTP 配置里出现
+`command`/`env_from_env` 都会被拒绝。
+
+## 密钥与环境变量（servers.json 不存明文）
+
+`servers.json` 只存 **变量名引用**，真实值来自两处：
+
+1. **mcp 环境存储**：`<AgentDockHome>/env/mcp/<name>.env`（envstore，0600），
+   用 `mcp_manage action=env_set/env_unset/env_list` 管理；
+2. **AgentDock 宿主进程自身的环境变量**（`env_from_env` 的映射目标，或 `header_env`
+   的 fallback）。
+
+解析规则（`internal/mcp/client/protocol.go`）：
+
+- stdio 子进程环境 = 最小系统环境白名单 + `env_from_env` 映射（宿主缺该变量 →
+  `MCP_AUTH_REQUIRED`，拒绝调用）+ mcp 环境存储的全部键值；
+- **mcp 环境存储的值优先**：可覆盖 `env_from_env` 映射与同名的宿主变量；HTTP `header_env`
+  同样先查 mcp 环境存储再 fallback 宿主环境，取不到值 → `MCP_AUTH_REQUIRED`。
+
+隔离不变量与 envstore 契约见 security/env-isolation。
+
+## 调用（三步，不摊平进工具表）
+
+客户端看到的始终只有四个入口：`mcp_manage`、`mcp_tool_search`、`mcp_tool_inspect`、
+`mcp_tool_call`。外部工具 **不进主工具表**：
+
+1. `mcp_tool_search`：按关键词搜已启用服务器的工具摘要（返回 `skill` 式的
+   `<server>:<tool>` qualified name）；
+2. `mcp_tool_inspect`：读单个工具的完整 schema；
+3. `mcp_tool_call`：以 `<server>:<tool>` 调用；**参数先按发现阶段缓存的对方 schema
+   校验再转发**，校验失败不触达远端。
+
+## 验证与失败处理
+
+- 注册后 `mcp_manage action=list` 看 `status`/`tool_count`/`last_error`；
+  `action=refresh` 强制重连并重新发现工具。
+- 错误经统一 `ToolError` envelope（见 tool-runtime），动态 MCP 专属码：
+  - 可重试（retryable=true）：`MCP_CONNECTION_FAILED`、`MCP_TIMEOUT`、
+    `MCP_TRANSPORT_REJECTED`、`MCP_REGISTRY_READ_FAILED`；
+  - 不可重试：`MCP_CONFIG_INVALID`（注册契约不符）、`MCP_AUTH_REQUIRED`（环境引用缺值）、
+    `MCP_SERVER_DISABLED`、`MCP_SERVER_NOT_FOUND`、`MCP_TOOL_NOT_FOUND`、
+    `MCP_REMOTE_ERROR`（远端返回错误）、`MCP_START_FAILED`（stdio 进程起不来）。
+- 工具调用失败是请求级结果，不会使连接/发现状态失效；只有 refresh/initialize/tools/list
+  生命周期故障才记入 server 的 `last_error`。

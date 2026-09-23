@@ -47,9 +47,17 @@ schema v1：安装根、二进制路径、端口、tunnel mode `none|quick|named
 - `resolveRuntimePaths` 把安装时记录的旧绝对路径收敛到 runtime.json 实际所在目录
   （对抗 Windows MSIX/打包重定向）。
 
+## 连接模式（连接选项如何落到配置）
+
+macOS 安装器的连接选项是 `TunnelMode`：`local(none) / lan / quick / named`，持久化在 tunnel env 的
+`AGENTDOCK_TUNNEL_MODE`。`lan` 模式不启用 tunnel，而是把 Core env 的 `AGENTDOCK_HOST` 写为
+`lan`（多网段监听语义见 security/configuration）；读回时 tunnel mode=lan ↔ host=lan 互相印证。
+Windows 侧经 `agentdock config update --listen loopback|lan` 持久化到控制面板 settings，
+`platformPrepareCoreEnvironment` 按 settings 解析 `AGENTDOCK_HOST`。
+
 ## Windows 侧
 
-- **控制面板直连 HTTP `127.0.0.1:<port>`，不走 desktopcontrol 管道**。
+- **控制面板直连 HTTP `127.0.0.1:<port>`，不走 desktopcontrol 管道**；manifest.Host 恒为回环。
 - Tunnel 凭据：DPAPI 加密 + `credential-owner-sid.txt` owner-SID 绑定——SID 必须与当前用户一致，
   仅 Administrators 组授权不算数。
 - 服务托管模式探测顺序：Windows Service `agentdock` → 计划任务 → HKCU Run。

@@ -33,6 +33,20 @@ code:
 OAuth 开启的强约束也在这里：`AGENTDOCK_SERVER_URL` 必须 origin-only（https 或回环 http）、
 password ≥12 字符、token secret ≥32 字节。
 
+## LAN 监听模式（AGENTDOCK_HOST=lan）
+
+`Host` 支持特殊值 `lan`（大小写不敏感，Normalize 归一）：
+
+- 语义：监听 **回环 + 本机当前全部私网网段地址**（RFC1918 IPv4 + IPv6 ULA `fc00::/7`）；
+  多网卡/多网段同时监听，`httpx` 为每个地址建独立 listener。
+- link-local（fe80::）刻意排除——需要作用域后缀，无法生成客户端可用的稳定 URL。
+- 回环始终监听：桌面控制面与健康探测按 127.0.0.1 访问，不随 LAN 模式改变。
+- 地址只在启动时解析一次；**网络环境变化后需重启**（与配置一次性加载模型一致）。
+- 私网地址发现不到时降级为仅回环并打 WARN，不拒绝启动。
+- 认证门不变：`lan` 是非回环 bind，无 token/OAuth 拒绝启动（安装器总是生成 token）。
+- `lan` 只属于 env/Core：manifest（runtime.json）的 Host、健康探测与本机展示 URL 一律翻译回
+  127.0.0.1（installer 的 `healthURL`/`manifestHost` 承担该翻译）。
+
 ## 凭据单一来源
 
 启动即 `Unsetenv` 旧 `AGENTDOCK_NEXUS_ENDPOINT/TOKEN`：Nexus endpoint/device token 只来自

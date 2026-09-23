@@ -1,13 +1,13 @@
 ---
-description: "MCP 协议面速查：toolEnvelope 成功/错误结构、Retryable 重试约定、view_image 图片提升、mcp_tool_call 透传、_meta 注入点、MCP Apps UI 资源门控、动态 MCP 三工具与 qualified name 规则 / tool envelope, mcp apps, dynamic mcp, mcp_tool_call, qualified name"
+description: "MCP 协议面速查：toolEnvelope 成功/错误结构、Retryable 重试约定、view_image 图片提升、mcp_tool_call 透传、_meta 注入点、MCP Apps UI 资源门控（只是界面卡片不是插件机制）/ tool envelope, mcp apps, dynamic mcp envelope"
 kind: reference
+relations:
+  related:
+    - tool-system/dynamic-mcp.mdx
 code:
   paths:
     - internal/mcp/server.go
     - internal/mcp/apps.go
-    - internal/mcp/client/manager.go
-    - internal/mcp/client/types.go
-    - internal/tool/mcp/service.go
 ---
 
 # MCP 协议面（envelope、Apps、动态 MCP）
@@ -42,10 +42,12 @@ Stateless:true、JSONResponse:true、1MiB body cap；`DisableLocalhostProtection
 
 ## 动态 MCP（外部服务器工具）
 
-- **不进主工具表**：统一走 `mcp_tool_search → mcp_tool_inspect → mcp_tool_call` 三工具，
-  控制主工具表体积并隔离第三方。
+注册工作流、servers.json 契约与密钥规则归 [dynamic-mcp](dynamic-mcp.mdx) 所有；本篇只记协议面：
+
+- 外部工具 **不进主工具表**：统一走 `mcp_tool_search → mcp_tool_inspect → mcp_tool_call`
+  三个调用入口（加上管理入口 `mcp_manage` 共四个），控制主工具表体积并隔离第三方。
+- `mcp_tool_call` 结果透传远端 isError/content（`dynamicMCPToolEnvelope`），不二次包装语义。
 - qualified name = `<server>:<tool>`；转发前先按发现阶段 schema 校验参数。
-- 注册表持久化为 JSON（`internal/mcp/client/store.go`），连接超时上限 300s。
 
 ## 匿名可达端点
 
