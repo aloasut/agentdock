@@ -1,96 +1,96 @@
 {
   "schema": "llmdoc.meta/v3",
   "baseline": {
-    "revision": "fb8f01072e811458180bb594ad9d85abf8a7048f",
-    "verifiedAt": "2026-09-23T03:48:57.551Z"
+    "revision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce",
+    "verifiedAt": "2026-09-23T03:58:43.181Z"
   },
   "documents": {
     "acp/acp-runtime.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "acp/adapter-compatibility.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "desktop/desktop-runtime.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "desktop/wsl-helper.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "engineering/script-governance.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "engineering/testing-and-ci.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "execution-model.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "nexus/nexus-bridge.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "security/authentication.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "security/configuration.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "security/env-isolation.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "security/path-boundary.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "security/public-artifacts.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "skills/skill-content-model.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "skills/skill-contract.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "task-evolution/evolution-policy.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "task-evolution/task-state.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "tool-system/add-a-tool.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "tool-system/context-tools.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "tool-system/mcp-surface.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "tool-system/runtime-api.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "tool-system/tool-runtime.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "update-delivery/install-engine.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "update-delivery/release-integrity.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "update-delivery/update-engine.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "update-delivery/windows-legacy-migration.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "tool-system/dynamic-mcp.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "host-inputs.mdx": {
-      "validatedRevision": "fb8f01072e811458180bb594ad9d85abf8a7048f"
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     },
     "tool-system/client-tool-boundary.mdx": {
-      "validatedRevision": null
+      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
     }
   },
   "convergence": {
