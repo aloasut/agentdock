@@ -85,6 +85,9 @@
     },
     "tool-system/dynamic-mcp.mdx": {
       "validatedRevision": "9cfbf45ab0405db6204ae2d24fbe33414772b534"
+    },
+    "host-inputs.mdx": {
+      "validatedRevision": null
     }
   },
   "convergence": {

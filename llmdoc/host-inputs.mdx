@@ -1,0 +1,51 @@
+---
+description: "宿主文件读取面全景：AgentDock 会读取本机/工作区上哪些文件与目录——技能三来源目录、AGENTS.md 两处、MCP servers.json——与明确不读清单（shell rc、其他 dotfile、cloudflared 配置）；给读取面新增路径前必读 / what files does agentdock read on this machine, host files, discovery paths, skills directories, AGENTS.md"
+kind: reference
+relations:
+  related:
+    - skills/skill-contract.mdx
+    - tool-system/context-tools.mdx
+    - tool-system/dynamic-mcp.mdx
+    - security/env-isolation.mdx
+code:
+  paths:
+    - internal/app/common_skills.go
+    - internal/app/filesystem_skills.go
+    - internal/app/workspace_context.go
+    - internal/agentinstructions/instructions.go
+    - internal/mcp/client/store.go
+---
+
+# 宿主文件读取面（AgentDock 会读本机哪些文件、明确不读什么）
+
+这个问题的高频问法：「AgentDock 会读取我机器上哪些文件/目录？」「放在哪个目录会被发现？」
+答案的封闭集合如下；各项细节的 owner 见表内链接。行为面之外的 `~/.agentdock/` 内容
+（env、oauth、secrets、locks、data/skills）是 AgentDock 自管状态，不是"读用户配置"，
+加固契约见 security/path-boundary。
+
+## 会读取（封闭集合）
+
+| 类别 | 路径 | 权限 | owner |
+|---|---|---|---|
+| shared 技能 | `~/.agents/skills/<name>/` | 只读发现 | skills/skill-contract |
+| workspace 技能 | `<工作区>/.agents/skills/<name>/` | 只读，sourceID 防拼 URI | skills/skill-contract |
+| managed 技能 | `~/.agentdock/skills/<name>/` | 唯一可写（skill_manage） | skills/skill-content-model |
+| 全局指令 | `~/.agentdock/AGENTS.md`（仅此一个） | 只读 | tool-system/context-tools |
+| 工作区指令 | workspace root → workdir 逐级 `AGENTS.md`（≤64 层） | 只读 | tool-system/context-tools |
+| 动态 MCP 注册表 | `~/.agentdock/mcp/servers.json` | 可热同步（手工编辑也生效） | tool-system/dynamic-mcp |
+
+## 明确不读（负向边界，改动即契约变更）
+
+- **shell rc / 登录 profile 不读**（`~/.zshrc`、`~/.bashrc` 等）：子进程环境走
+  `MinimalSystemEnv` 白名单，不继承 shell 初始化结果（security/env-isolation）。
+- **工作区内除 `.agents/skills/` 与 `AGENTS.md` 外的任何文件一律忽略**（`.editorconfig`、
+  `.envrc`、项目私有 YAML 等都不存在"AgentDock 会读"的隐式约定）。
+- **`~/.cloudflared/config.yml` 不读**：tunnel 强制用 AgentDock 自己的最小空配置 `{}`，
+  与用户 cloudflared 配置隔离（desktop/desktop-runtime）。
+- **skill 包内 `agentdock.yaml` 是被禁的 legacy 格式**（skills/skill-contract）。
+
+## 维护义务
+
+给读取面新增任何外部路径（新的目录约定、新的 workspace dotfile、新的全局文件）= 跨主题
+契约变更：先更新本文全景表与"不读清单"，再同步对应 owner 文档，并按 security 主题评估
+暴露面。删除或收窄读取面时同样回改本文。
