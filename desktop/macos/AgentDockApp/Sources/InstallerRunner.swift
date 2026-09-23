@@ -81,7 +81,7 @@ final class InstallerRunner {
             }
 
             try await service.start()
-            if request.mode != .local {
+            if request.mode != .local && request.mode != .lan {
                 do {
                     try service.setTunnelEnabled(true)
                 } catch {
@@ -94,6 +94,9 @@ final class InstallerRunner {
             let publicURL: String
             switch request.mode {
             case .local:
+                publicURL = ""
+            case .lan:
+                // LAN 模式没有公网地址；局域网设备按本机私网 IP 直连。
                 publicURL = ""
             case .named:
                 publicURL = serverURL ?? ""
@@ -194,6 +197,12 @@ final class InstallerRunner {
         case .local:
             values.removeValue(forKey: "AGENTDOCK_SERVER_URL")
             values["AGENTDOCK_OAUTH_ENABLED"] = "false"
+        case .lan:
+            // LAN 模式由 Core 在启动时把 "lan" 展开为回环 + 全部私网网段；
+            // 认证凭据在上方无条件生成，满足非回环监听的启动校验。
+            values["AGENTDOCK_HOST"] = "lan"
+            values.removeValue(forKey: "AGENTDOCK_SERVER_URL")
+            values["AGENTDOCK_OAUTH_ENABLED"] = "false"
         case .quick:
             QuickTunnelBootstrap.prepareInitialCoreEnvironment(&values)
             tunnelValues["AGENTDOCK_TUNNEL_TARGET"] = "http://127.0.0.1:\(port)"
@@ -205,6 +214,10 @@ final class InstallerRunner {
             tunnelToken = try tokenStore.tokenForNamedTunnel(providedToken: providedTunnelToken)
             values["AGENTDOCK_SERVER_URL"] = serverURL
             values["AGENTDOCK_OAUTH_ENABLED"] = "true"
+        }
+        if request.mode != .lan, values["AGENTDOCK_HOST"]?.lowercased() == TunnelMode.lan.rawValue {
+            // 从 LAN 模式切回其他模式时必须撤销 lan 监听；其余自定义 host 保持不变。
+            values["AGENTDOCK_HOST"] = "127.0.0.1"
         }
 
         return PreparedConfiguration(

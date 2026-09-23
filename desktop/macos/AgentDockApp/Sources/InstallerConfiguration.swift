@@ -2,12 +2,14 @@ import Foundation
 
 enum TunnelMode: String, CaseIterable {
     case local = "none"
+    case lan
     case quick
     case named
 
     var title: String {
         switch self {
         case .local: return L10n.text("Local only")
+        case .lan: return L10n.text("LAN")
         case .quick: return L10n.text("Temporary public access")
         case .named: return L10n.text("Use your own Cloudflare domain")
         }
@@ -17,6 +19,8 @@ enum TunnelMode: String, CaseIterable {
         switch self {
         case .local:
             return L10n.text("Only allow this Mac to access AgentDock. Cloudflare public access stays disabled; you can configure your own tunnel or reverse proxy.")
+        case .lan:
+            return L10n.text("Let other devices on this machine's network reach AgentDock directly. Multiple network segments are served at once; access requires the Bearer token or OAuth. Cloudflare public access stays disabled.")
         case .quick:
             return L10n.text("Automatically generate a temporary public address through Cloudflare without configuring a domain. Suitable for temporary access or testing; the address may change.")
         case .named:

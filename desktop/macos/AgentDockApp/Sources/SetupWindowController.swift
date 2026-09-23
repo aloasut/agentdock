@@ -39,7 +39,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let updateButton = NSButton(title: L10n.text("Check for updates"), target: nil, action: nil)
 
     private let publicMode = NSSegmentedControl(
-        labels: [L10n.text("Local only"), L10n.text("Temporary address"), L10n.text("Custom domain")],
+        labels: [L10n.text("Local only"), L10n.text("LAN"), L10n.text("Temporary address"), L10n.text("Custom domain")],
         trackingMode: .selectOne,
         target: nil,
         action: nil
@@ -398,7 +398,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
 
         let configuration = status.configuration
-        localAddress.stringValue = configuration?.localMCPURL?.absoluteString ?? L10n.text("Configuration unavailable")
+        localAddress.stringValue = displayAddress(configuration)
         renderPublicAddress(configuration?.publicMCPURL, automaticallyCheck: true)
         authTokenValue = configuration?.authToken ?? ""
         oauthPasswordValue = configuration?.oauthPassword ?? ""
@@ -585,15 +585,33 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private func segment(for mode: TunnelMode) -> Int {
         switch mode {
         case .local: return 0
-        case .quick: return 1
-        case .named: return 2
+        case .lan: return 1
+        case .quick: return 2
+        case .named: return 3
         }
+    }
+
+    /// 连接信息展示：LAN 模式额外列出本机各私网网段的 MCP 地址，
+    /// 让其他设备可以直接复制；回环地址始终保留给本机客户端。
+    private func displayAddress(_ configuration: ServiceConfiguration?) -> String {
+        guard let configuration, let localURL = configuration.localMCPURL else {
+            return L10n.text("Configuration unavailable")
+        }
+        var parts = [localURL.absoluteString]
+        let lanURLs = configuration.lanMCPURLs.map(\.absoluteString)
+        if configuration.isLANListen {
+            parts.append(lanURLs.isEmpty
+                ? L10n.text("No LAN address detected")
+                : L10n.format("LAN: %@", lanURLs.joined(separator: "  ")))
+        }
+        return parts.joined(separator: "  ")
     }
 
     private var selectedMode: TunnelMode {
         switch publicMode.selectedSegment {
-        case 1: return .quick
-        case 2: return .named
+        case 1: return .lan
+        case 2: return .quick
+        case 3: return .named
         default: return .local
         }
     }
@@ -644,7 +662,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
                 authTokenValue = result.authToken
                 oauthPasswordValue = result.oauthPassword
-                localAddress.stringValue = result.localMCPURL
+                localAddress.stringValue = displayAddress(ServiceConfiguration.load(from: service.paths.environment))
                 quickTunnelRefreshState = .idle
                 setDisplayedPublicMCPURL(resultPublicMCPURL, automaticallyCheck: true)
                 tunnelTokenField.stringValue = ""

@@ -73,10 +73,19 @@ struct ServiceConfiguration: Equatable {
 
     var healthHost: String {
         switch host {
-        case "0.0.0.0", "": return "127.0.0.1"
+        case "0.0.0.0", "", "lan", "LAN": return "127.0.0.1"
         case "::", "[::]": return "::1"
         default: return host
         }
+    }
+
+    var isLANListen: Bool { host.lowercased() == "lan" }
+
+    /// LAN 模式下本机各私网网段的 MCP 地址；非 LAN 模式为空。
+    /// 与 Core 的 lan 监听一致（回环 + RFC1918 IPv4），供连接信息展示。
+    var lanMCPURLs: [URL] {
+        guard isLANListen else { return [] }
+        return LANAddresses.privateIPv4Hosts().compactMap { URL(string: "http://\($0):\(port)/mcp") }
     }
 
     var localMCPURL: URL? { endpoint(path: "/mcp") }

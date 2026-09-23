@@ -234,7 +234,7 @@ final class ServiceController: @unchecked Sendable {
         // 这里只收敛“是否应注册”的长期配置，不等待 cloudflared 或公网 ready。
         // 更新 handoff 已负责重新绑定目标 App；普通启动也不应因短暂网络状态重建 SMAppService。
         switch try configuredTunnelMode() {
-        case .local:
+        case .local, .lan:
             try setTunnelEnabled(false)
         case .quick, .named:
             try setTunnelEnabled(true)

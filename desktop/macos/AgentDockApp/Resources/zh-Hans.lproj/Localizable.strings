@@ -53,6 +53,10 @@
 "Enable at least one Coding Agent profile." = "请至少启用一个 Coding Agent 配置。";
 "Enable this profile" = "启用此配置";
 "Invalid Coding Agent profile ID: %@" = "无效的 Coding Agent Profile ID：%@";
+"LAN" = "局域网";
+"LAN: %@" = "局域网：%@";
+"Let other devices on this machine's network reach AgentDock directly. Multiple network segments are served at once; access requires the Bearer token or OAuth. Cloudflare public access stays disabled." = "允许本机所在局域网内的设备直接访问 AgentDock，多个网段会同时监听；访问需要 Bearer Token 或 OAuth，Cloudflare 公网访问保持关闭。";
+"No LAN address detected" = "未发现局域网地址";
 "Profile" = "配置";
 "Remove profile" = "移除配置";
 "The default Coding Agent profile must reference an enabled profile." = "默认 Coding Agent 配置必须指向已启用的配置。";
