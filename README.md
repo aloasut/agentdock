@@ -85,6 +85,7 @@ See [Install AgentDock](https://uvwt.github.io/agentdock-docs/docs/getting-start
 ### Choose a connection option
 
 - **Local only:** the client and AgentDock run on the same computer.
+- **Local network (LAN):** devices on this machine's network connect directly. Every LAN segment is served at once, and authentication stays required.
 - **Temporary public address:** ChatGPT, a phone, or another remote device needs access and no domain is ready. The address may change after the Tunnel restarts.
 - **Fixed domain:** a stable address for long-term use. Requires a Cloudflare-managed domain and Tunnel Token.
 
