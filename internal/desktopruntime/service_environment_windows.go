@@ -47,8 +47,10 @@ var managedCoreEnvironment = []string{
 }
 
 type controlPanelSettings struct {
-	Port                    int                      `json:"port"`
-	LogLevel                string                   `json:"log_level"`
+	Port     int    `json:"port"`
+	LogLevel string `json:"log_level"`
+	// ListenMode 决定 Core 的监听范围：loopback 仅回环，lan 额外监听本机全部私网网段。
+	ListenMode              string                   `json:"listen_mode,omitempty"`
 	OAuthAccessTokenTTL     string                   `json:"oauth_access_token_ttl,omitempty"`
 	MCPAppsEnabled          bool                     `json:"mcp_apps_enabled"`
 	BrowserEnabled          bool                     `json:"browser_enabled"`
@@ -86,9 +88,11 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 	}
 
 	managed := map[string]string{
-		"AGENTDOCK_RUNTIME_ROOT":               root,
-		"AGENTDOCK_AUTH_TOKEN":                 authToken,
-		"AGENTDOCK_HOST":                       "127.0.0.1",
+		"AGENTDOCK_RUNTIME_ROOT": root,
+		"AGENTDOCK_AUTH_TOKEN":   authToken,
+		// lan 只下发给 Core 环境变量，由 internal/config 在启动时展开为回环加全部私网地址；
+		// manifest/runtime.json 的 Host 始终保持 127.0.0.1，本机健康探测与控制面板直连不随 LAN 改变。
+		"AGENTDOCK_HOST":                       resolveListenHost(settings.ListenMode),
 		"AGENTDOCK_PORT":                       strconv.Itoa(settings.Port),
 		"AGENTDOCK_LOG_LEVEL":                  settings.LogLevel,
 		"AGENTDOCK_MCP_APPS_ENABLED":           strconv.FormatBool(settings.MCPAppsEnabled),
@@ -195,6 +199,14 @@ func loadControlPanelSettings(runtimeRoot string, fallbackPort int) (controlPane
 			return controlPanelSettings{}, fmt.Errorf("OAuth Access Token 有效期无效: %w", err)
 		}
 	}
+	// 旧配置文件没有 listen_mode 字段，缺省视为 loopback，保持仅本机的历史行为不变。
+	settings.ListenMode = strings.ToLower(strings.TrimSpace(settings.ListenMode))
+	if settings.ListenMode == "" {
+		settings.ListenMode = "loopback"
+	}
+	if settings.ListenMode != "loopback" && settings.ListenMode != agentconfig.ListenHostLAN {
+		return controlPanelSettings{}, fmt.Errorf("不支持的监听模式: %s", settings.ListenMode)
+	}
 	if len(settings.ACPProfiles) == 0 {
 		// 旧 control-panel-settings.json 只在读取边界迁移一次；新文件只保存 Profiles。
 		var legacy struct {
@@ -244,6 +256,15 @@ func loadControlPanelSettings(runtimeRoot string, fallbackPort int) (controlPane
 		}
 	}
 	return settings, nil
+}
+
+// resolveListenHost 把面板监听模式映射为 AGENTDOCK_HOST。除 lan 外一律回环，
+// 避免 settings 里出现意外值时意外扩大监听面。
+func resolveListenHost(listenMode string) string {
+	if listenMode == agentconfig.ListenHostLAN {
+		return agentconfig.ListenHostLAN
+	}
+	return "127.0.0.1"
 }
 
 func effectiveOAuthAccessTokenTTL(configured, inherited string) string {

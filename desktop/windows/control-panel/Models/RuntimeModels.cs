@@ -85,6 +85,9 @@ public sealed class ControlPanelSettings
     [JsonPropertyName("log_level")]
     public string LogLevel { get; set; } = "info";
 
+    [JsonPropertyName("listen_mode")]
+    public string ListenMode { get; set; } = "loopback";
+
     [JsonPropertyName("oauth_access_token_ttl")]
     public string OAuthAccessTokenTtl { get; set; } = "";
 
@@ -150,6 +153,7 @@ public sealed record RuntimeSnapshot(
     string PublicMcpUrl,
     string SavedNamedOrigin,
     string TunnelMode,
+    string ListenMode,
     bool CoreStartupEnabled,
     bool TrayStartupEnabled,
     bool TunnelTokenStored,

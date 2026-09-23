@@ -126,9 +126,16 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 		return cause
 	}
 
+	// --listen 留空表示保留现有监听模式；runtime.settings 已经加载并归一化过旧值，
+	// 这里整体重写 settings 文件时必须带回旧值，避免每次保存都把 LAN 模式悄悄改回 loopback。
+	listenMode := request.ListenMode
+	if listenMode == "" {
+		listenMode = runtime.settings.ListenMode
+	}
 	settings := controlPanelSettings{
 		Port:                    request.Port,
 		LogLevel:                request.LogLevel,
+		ListenMode:              listenMode,
 		OAuthAccessTokenTTL:     request.OAuthAccessTokenTTL,
 		MCPAppsEnabled:          request.MCPAppsEnabled,
 		BrowserEnabled:          request.BrowserEnabled,

@@ -96,6 +96,12 @@
   <data name="LocalOnlyDescription" xml:space="preserve">
     <value>仅允许这台电脑访问，不启用 Cloudflare 公网访问；或者自行配置内网穿透或反向代理。</value>
   </data>
+  <data name="LanAccess" xml:space="preserve">
+    <value>局域网</value>
+  </data>
+  <data name="LanAccessDescription" xml:space="preserve">
+    <value>允许同一局域网内的其他设备（如家庭或办公网络）访问本机 AgentDock，不启用 Cloudflare 公网访问；保存后核心服务重启时生效。</value>
+  </data>
   <data name="TemporaryAddress" xml:space="preserve">
     <value>临时地址</value>
   </data>

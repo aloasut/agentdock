@@ -61,6 +61,10 @@ public sealed class RuntimeService : IDisposable
         {
             settings.LogLevel = "info";
         }
+        // 旧配置文件没有 listen_mode 字段，缺省视为 loopback；未知值也不放大监听面。
+        settings.ListenMode = string.Equals(settings.ListenMode?.Trim(), "lan", StringComparison.OrdinalIgnoreCase)
+            ? "lan"
+            : "loopback";
         settings.AcpProfiles ??= [];
         if (settings.AcpProfiles.Count == 0)
         {
@@ -148,6 +152,7 @@ public sealed class RuntimeService : IDisposable
             publicMcpUrl,
             savedNamedOrigin,
             tunnelMode,
+            settings.ListenMode,
             IsCoreStartupEnabled(manifest),
             IsRunValuePresent(manifest.TrayStartupValueName, "AgentDockTray"),
             File.Exists(Path.Combine(RuntimeRoot, "cloudflared-token.dpapi")),
@@ -392,6 +397,7 @@ public sealed class RuntimeService : IDisposable
             "update",
             "--port", settings.Port.ToString(),
             "--log-level", settings.LogLevel,
+            "--listen", string.IsNullOrWhiteSpace(settings.ListenMode) ? "loopback" : settings.ListenMode,
             "--oauth-access-token-ttl", settings.OAuthAccessTokenTtl ?? "",
             $"--mcp-apps-enabled={settings.McpAppsEnabled.ToString().ToLowerInvariant()}",
             $"--browser-enabled={settings.BrowserEnabled.ToString().ToLowerInvariant()}",

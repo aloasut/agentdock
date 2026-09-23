@@ -96,6 +96,12 @@
   <data name="LocalOnlyDescription" xml:space="preserve">
     <value>Only allow this computer to access AgentDock. Cloudflare public access stays disabled; you can configure your own tunnel or reverse proxy.</value>
   </data>
+  <data name="LanAccess" xml:space="preserve">
+    <value>LAN access</value>
+  </data>
+  <data name="LanAccessDescription" xml:space="preserve">
+    <value>Allow other devices on this computer's private networks (such as home or office LAN) to access AgentDock. Cloudflare public access stays disabled; the change takes effect after the core service restarts.</value>
+  </data>
   <data name="TemporaryAddress" xml:space="preserve">
     <value>Temporary address</value>
   </data>

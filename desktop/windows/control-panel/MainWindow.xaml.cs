@@ -113,6 +113,8 @@ public partial class MainWindow : Window
             LocalModeRadio.IsChecked = string.Equals(snapshot.TunnelMode, "none", StringComparison.OrdinalIgnoreCase);
             QuickModeRadio.IsChecked = string.Equals(snapshot.TunnelMode, "quick", StringComparison.OrdinalIgnoreCase);
             NamedModeRadio.IsChecked = string.Equals(snapshot.TunnelMode, "named", StringComparison.OrdinalIgnoreCase);
+            // LAN 与隧道互斥且同组，最后赋值让它覆盖上面按隧道模式选中的 Local 选项。
+            LanModeRadio.IsChecked = IsLanListenMode(snapshot.ListenMode);
             if (!ServerUrlTextBox.IsKeyboardFocusWithin &&
                 (string.Equals(snapshot.TunnelMode, "named", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(ServerUrlTextBox.Text)))
             {
@@ -277,8 +279,16 @@ public partial class MainWindow : Window
         RegenerateQuickButton.IsEnabled = quick;
     }
 
+    private static bool IsLanListenMode(string? listenMode) =>
+        string.Equals(listenMode, "lan", StringComparison.OrdinalIgnoreCase);
+
     private string SelectedTunnelMode()
     {
+        // LAN 监听与公网隧道互斥：选中局域网时隧道一律视为 none。
+        if (LanModeRadio.IsChecked == true)
+        {
+            return "none";
+        }
         if (QuickModeRadio.IsChecked == true)
         {
             return "quick";
@@ -292,6 +302,7 @@ public partial class MainWindow : Window
 
     private async void ApplyTunnelModeButton_Click(object sender, RoutedEventArgs e)
     {
+        var lanAccess = LanModeRadio.IsChecked == true;
         var mode = SelectedTunnelMode();
         if (mode == "quick")
         {
@@ -299,11 +310,39 @@ public partial class MainWindow : Window
             PublicTestStatusText.Text = UiText.Get("GeneratingTemporaryAddress");
             _lastAutoTestOrigin = "";
         }
-        await ExecuteActionAsync(
+        if (lanAccess)
+        {
+            await ExecuteActionAsync(
+                UiText.Get("SwitchingPublicAccess"),
+                async () =>
+                {
+                    // LAN 与隧道互斥：先确保隧道回到 none，再用 config update 保存 --listen lan；
+                    // config update 自带核心重启，监听模式随重启生效。
+                    await _runtime.SetTunnelModeAsync("none", "", "");
+                    await SaveListenModeAsync("lan");
+                },
+                TunnelActionStatusText);
+            TunnelTokenPasswordBox.Clear();
+            return;
+        }
+        var applied = await ExecuteActionAsync(
             UiText.Get("SwitchingPublicAccess"),
             () => _runtime.SetTunnelModeAsync(mode, ServerUrlTextBox.Text.Trim(), TunnelTokenPasswordBox.Password),
             TunnelActionStatusText);
         TunnelTokenPasswordBox.Clear();
+        // 从局域网切回本机或隧道时，监听模式要一起回到 loopback，否则核心仍监听私网地址。
+        if (applied && IsLanListenMode(_snapshot?.ListenMode))
+        {
+            await SaveListenModeAsync("loopback");
+        }
+    }
+
+    private Task SaveListenModeAsync(string listenMode, CancellationToken cancellationToken = default)
+    {
+        var settings = _snapshot?.Settings ?? new ControlPanelSettings();
+        // 只切换监听模式；其余字段沿用最近一次刷新到的已保存配置，不替用户改高级设置。
+        settings.ListenMode = listenMode;
+        return _runtime.SaveSettingsAsync(settings, cancellationToken);
     }
 
     private async void RegenerateQuickButton_Click(object sender, RoutedEventArgs e)
@@ -856,6 +895,8 @@ public partial class MainWindow : Window
         {
             Port = port,
             LogLevel = SelectedLogLevel(),
+            // 高级设置保存走同一条 config update 通道；监听模式不属于该页，沿用当前已持久化的值。
+            ListenMode = _snapshot?.Settings.ListenMode ?? "loopback",
             OAuthAccessTokenTtl = _snapshot?.Settings.OAuthAccessTokenTtl ?? "",
             McpAppsEnabled = McpAppsEnabledCheckBox.IsChecked == true,
             BrowserEnabled = BrowserEnabledCheckBox.IsChecked == true,

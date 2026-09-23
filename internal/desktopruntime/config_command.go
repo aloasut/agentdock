@@ -19,6 +19,7 @@ type ConfigUpdateRequest struct {
 	RuntimeRoot             string
 	Port                    int
 	LogLevel                string
+	ListenMode              string
 	OAuthAccessTokenTTL     string
 	MCPAppsEnabled          bool
 	BrowserEnabled          bool
@@ -40,6 +41,7 @@ func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 		runtimeRoot := flags.String("runtime-root", "", "桌面运行目录")
 		port := flags.Int("port", 0, "本地监听端口")
 		logLevel := flags.String("log-level", "info", "日志级别")
+		listen := flags.String("listen", "", "监听模式：loopback（仅本机）或 lan（局域网可达）；留空表示保留现有设置")
 		oauthAccessTokenTTL := flags.String("oauth-access-token-ttl", "", "OAuth Access Token 有效期；留空表示继承环境变量或使用默认值")
 		mcpAppsEnabled := flags.Bool("mcp-apps-enabled", true, "启用 MCP Apps UI")
 		browserEnabled := flags.Bool("browser-enabled", false, "启用浏览器")
@@ -80,6 +82,7 @@ func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 			RuntimeRoot:             strings.TrimSpace(*runtimeRoot),
 			Port:                    *port,
 			LogLevel:                strings.ToLower(strings.TrimSpace(*logLevel)),
+			ListenMode:              strings.ToLower(strings.TrimSpace(*listen)),
 			OAuthAccessTokenTTL:     strings.TrimSpace(*oauthAccessTokenTTL),
 			MCPAppsEnabled:          *mcpAppsEnabled,
 			BrowserEnabled:          *browserEnabled,
@@ -113,6 +116,12 @@ func validateConfigUpdate(request ConfigUpdateRequest) error {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("不支持的日志级别: %s", request.LogLevel)
+	}
+	// 空值表示调用方不想改动监听模式，由持久化层保留现有设置。
+	switch request.ListenMode {
+	case "", "loopback", agentconfig.ListenHostLAN:
+	default:
+		return fmt.Errorf("不支持的监听模式: %s", request.ListenMode)
 	}
 	if request.OAuthAccessTokenTTL != "" {
 		if err := agentconfig.ValidateOAuthAccessTokenTTL(request.OAuthAccessTokenTTL); err != nil {

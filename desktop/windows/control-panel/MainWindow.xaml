@@ -116,6 +116,8 @@
               <StackPanel>
                 <RadioButton x:Name="LocalModeRadio" GroupName="TunnelMode" Content="{local:Loc LocalOnly}" Tag="none" Margin="0,4,0,10" Checked="TunnelModeRadio_Checked" />
                 <TextBlock Text="{local:Loc LocalOnlyDescription}" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
+                <RadioButton x:Name="LanModeRadio" GroupName="TunnelMode" Content="{local:Loc LanAccess}" Tag="lan" Margin="0,0,0,10" Checked="TunnelModeRadio_Checked" />
+                <TextBlock Text="{local:Loc LanAccessDescription}" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
                 <RadioButton x:Name="QuickModeRadio" GroupName="TunnelMode" Content="{local:Loc TemporaryAddress}" Tag="quick" Margin="0,0,0,10" Checked="TunnelModeRadio_Checked" />
                 <TextBlock Text="{local:Loc TemporaryAddressDescription}" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
                 <RadioButton x:Name="NamedModeRadio" GroupName="TunnelMode" Content="{local:Loc CustomDomain}" Tag="named" Margin="0,0,0,10" Checked="TunnelModeRadio_Checked" />
