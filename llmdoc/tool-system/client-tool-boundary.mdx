@@ -1,0 +1,47 @@
+---
+description: "AgentDock 工具与 AI 客户端内置工具（Codex 等）的能力边界速查：工具对应物对照表（文件/命令/看图/浏览器/ACP）、三条边界规则（MCP 永不进内置表、本地调用不改道、重叠任务模型优先内置）、AgentDock 无对应物的类别清单、外部调研的核对方法 / codex comparison, built-in tools, capability boundary, remote mac, apply_patch"
+kind: reference
+relations:
+  related:
+    - tool-system/tool-runtime.mdx
+    - tool-system/dynamic-mcp.mdx
+    - acp/acp-runtime.mdx
+    - security/path-boundary.mdx
+code:
+  paths:
+    - internal/app/specs_registry.go
+    - internal/app/specs_media.go
+---
+
+# 与客户端内置工具的能力边界（Codex 等）
+
+## 三条边界规则（稳定，不随客户端版本变化）
+
+1. **AgentDock 的工具永远是 MCP 工具面**，不进任何客户端的内置工具表（owner：
+   tool-system/tool-runtime）。客户端内置调用发生在 **跑客户端的那台机器** 上，
+   不会因 AgentDock 存在而改道到远端。
+2. **重叠任务模型优先内置**；对"远端 Mac 专属"任务（Mac 上的文件、图片、进程），
+   AgentDock 工具往往是 **唯一可达** 路径——工具 `description` 要写清适用范围，
+   帮模型在对的任务上选对工具。
+3. **客户端/模型侧能力 AgentDock 不做对应物**：沙箱与审批、子代理编排、web 检索、
+   模型生图、目标与计划持久化、客户端原生 GUI 自动化。这些的执行与状态都在客户端
+   会话或模型服务里（权限边界模型见 security/path-boundary）。
+
+## 工具对应物对照表（以 specs_registry 注册为准）
+
+| 客户端内置（Codex 例） | AgentDock 对应物 | 差异要点 |
+|---|---|---|
+| 本地文件读/列/搜 | `read_file` / `list_dir` / `search_text` | read_file 只读 UTF-8 文本切片；作用于远端 Host 路径与 skill:// 资源 |
+| apply_patch 补丁 | `file_edit` | patch 事务语义见工具契约 |
+| 本地 shell / PTY exec | `exec_command` + `session_act` / `session_observe` | **无沙箱层**：以 AgentDock 进程 OS 用户运行，边界在部署层（security/path-boundary） |
+| tools.view_image 看图 | **`view_image`** | 按 artifact_id / Host path / HTTP(S) URL 载入本机图片，返回 MCP image content——**同名同功能，外部调研常漏** |
+| Browser Use | `browser_session` / `browser_act` / `browser_snapshot` | CDP（chromedp）驱动浏览器，**非原生应用 GUI** |
+| 子代理（spawn_agent 等） | 无对应物；`acp_*` 是另一套 adapter 会话 | ACP 会话 ≠ 客户端进程内子代理线程（acp/acp-runtime） |
+| web_search / 生图 / goals 与计划 | 无对应物 | 走客户端检索栈 / 模型服务 / 客户端会话状态 |
+
+## 外部调研的核对方法
+
+外部对比材料（LLM 调研、博客）核对 AgentDock 能力时，**以 `internal/app/specs_registry.go`
+的注册表为准**，不要从单一工具的描述外推全套能力——真实案例：只看 `read_file` 是 UTF-8
+文本就断言"AgentDock 不能看图"，漏掉 `view_image`。客户端侧的具体工具名与模式
+（子代理清单、web_search 模式等）随版本演进，引用前查客户端官方文档，不在本文维护快照。
