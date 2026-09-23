@@ -1,0 +1,45 @@
+---
+description: "环境变量隔离速查：envstore 的 shell 风格 .env 但不执行替换/展开、MinimalSystemEnv 白名单（server 机密默认不流入子进程）、SKILL_DATA_DIR 保留变量、确定性排序格式、解析失败不静默清空 / env isolation, minimal env, secrets, envstore, SKILL_DATA_DIR"
+kind: reference
+code:
+  paths:
+    - internal/envstore/store.go
+    - internal/envstore/parser.go
+    - internal/envstore/env.go
+    - internal/tool/command/command_invocation.go
+---
+
+# 环境变量隔离（envstore 与子进程环境）
+
+## 存储模型
+
+`<AgentDockHome>/env/{skill|mcp}/<name>.env`，shell 风格 KV。不变量：0600 + EnsurePrivate；
+单文件 ≤1MiB；key 必须 `^[A-Za-z_][A-Za-z0-9_]*$`；scope 名不允许路径分隔符；跨进程写 =
+filelock + 进程内 mutex；写走 atomicfile；清空 = 删除文件。
+
+## 解析器契约（与 shell source 的本质区别）
+
+只接受：赋值、单双引号、注释、`export` 前缀、反斜杠续行。
+**不执行命令替换、不做变量展开——.env 内容永远是字面量。**
+
+## 隔离模型（密钥隔离的实现点）
+
+子进程环境 = `MinimalSystemEnv()` 白名单（PATH/HOME/TMPDIR/LANG/LC_ALL/SSL_CERT_*，
+Windows 另有平台清单）+ skill/mcp scope env + 请求显式传入的 env（key 校验 + 保留字拒绝）。
+
+> **server 自身环境（含 `AGENTDOCK_AUTH_TOKEN`、`AGENTDOCK_OAUTH_PASSWORD` 等机密）默认不流入子进程。**
+> 往白名单之外加默认继承 = 把 server 机密下发给任意命令；需要新变量时走 envstore scope
+> 或显式 JSON 映射，不改白名单。
+
+- `SKILL_DATA_DIR` 是保留变量，用户环境配置不可覆盖（`IsReservedSkillEnvironmentKey`）。
+- `Merge/Format` 输出 sorted、确定性格式：多进程写读一致性依赖格式稳定，安装脚本与原生运行时共读。
+
+## 失败语义
+
+env 文件解析失败/超限 → 该次工具调用失败（`SKILL_ENV_INVALID` / parse error），
+**不静默清空、不跳过**（fail-closed）。
+
+## 与 skill 的关系
+
+只有 managed skill 享受 env/data 配置（`skill_manage env_*`，值永不回显）；
+shared/workspace skill 不继承。见 skills/skill-contract。

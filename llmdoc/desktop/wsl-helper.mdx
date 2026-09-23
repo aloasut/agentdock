@@ -1,0 +1,44 @@
+---
+description: "WSL 文件助手速查：stdin/stdout JSON 协议 v1、--self-sha256 完整性校验、保护路径拒绝 /proc|/sys|/dev|/run、symlink 组件拒绝、expected-sha256/mode/uid/gid 前置条件事务化 patch、随 Windows generation 分发 / wsl helper, wsl file, protocol v1, integrity"
+kind: reference
+relations:
+  related:
+    - desktop/desktop-runtime.mdx
+code:
+  paths:
+    - cmd/agentdock-wsl-helper/main.go
+    - internal/wslfilehelper/protocol.go
+    - internal/wslfilehelper/paths.go
+    - internal/wslfilehelper/transaction.go
+    - internal/tool/file/wsl_files_windows.go
+    - internal/tool/file/file_runtime.go
+    - packaging/windows/build-wsl-helper-payload.ps1
+---
+
+# WSL 文件助手（agentdock-wsl-helper）
+
+## 为什么存在
+
+Windows 宿主的 file 工具（runtime=wsl 选择器，`internal/tool/file/file_runtime.go`，仅 Windows）
+需要以 **Linux 语义**（uid/gid/mode/symlink）操作 WSL 内文件，于是把 Linux 侧逻辑下放给在 WSL 内
+运行的 Go 二进制（历史上取代了旧 shell helper）。
+
+## 协议与完整性
+
+- stdin → Request / stdout → Response JSON，`protocol_version = "1"`。
+- 宿主安装/调用前用 `--protocol-version` 与 `--self-sha256` 对照 payload `manifest.json`
+  中记录的 sha256——helper 与宿主必须逐字节匹配。
+
+## 安全不变量
+
+- 写路径拒绝 `/proc|/sys|/dev|/run` 前缀（`PROTECTED_WSL_PATH`）。
+- 路径组件含 symlink 拒绝（`SYMLINK_NOT_ALLOWED`）。
+- 事务化 patch 以 expected-sha256/mode/uid/gid 为前置条件；结构化错误码：
+  `OWNERSHIP_CHANGE_BLOCKED`、`CROSS_DEVICE_MOVE` 等。
+- 输入上限 64MB。
+
+## 分发不变量
+
+helper 随每个 Windows generation/Release ZIP 打包（`versions/<v>/wsl-helper/`），
+payload 由 `build-wsl-helper-payload.ps1` 交叉编译（linux amd64/arm64）并内嵌 sha256 到 manifest。
+generation 完整性校验依赖这些文件存在（见 update-engine / desktop-runtime）。

@@ -1,0 +1,42 @@
+---
+description: "Nexus 桥 owner：配对身份文件是凭据唯一来源（拒绝环境变量第二来源）、一次性配对码换 Device Token、NodeAPI 窄接口边界（协议在外部 agentdock-protocol）、重连退避 1s→30s+抖动、先 drain 再关 Runtime 的次序约束、token 不跨重定向 / nexus pair, device token, nexusdock, websocket bridge"
+kind: architecture
+code:
+  paths:
+    - internal/nexusbridge/client.go
+    - internal/nexusbridge/identity.go
+    - internal/nexusclient/client.go
+    - cmd/agentdock/command_nexus.go
+---
+
+# Nexus 桥（配对、通道、关闭次序）
+
+## 凭据策略（单一来源不变量）
+
+与远端 NexusDock 节点（手机/远端控制面）的双向通道。配对：`POST <endpoint>/v1/nodes/pair`
+用一次性配对码换 Device Token，写入配对身份文件（Version 1：Endpoint/NodeID/DeviceID/DeviceToken）。
+
+> **Nexus 地址与 Device Token 只来自配对身份文件**；拒绝环境变量/控制面板等第二来源
+> （启动时还会主动清除旧 env，见 execution-model）；旧 DPAPI Token 不再读取并立即清除。
+> `Status` 输出刻意不含 token 本身。
+
+## 协议边界
+
+- WebSocket 客户端（消息上限 8MB）；**应用层协议在外部模块 `github.com/uvwt/agentdock-protocol`**，
+  本仓库侧边界是窄接口 `NodeAPI`：ToolNames/ToolDescriptors/UIResources/ToolContractHash/
+  AgentDockLocalContext/Invoke/ReadAppResource。
+- 远端经 Bridge 调到的能力与 Runtime API 共享同一契约（见 tool-system/runtime-api）；
+  演化提案只能 propose（见 task-evolution/evolution-policy）。
+
+## 生命周期与关闭次序
+
+- 重连退避 1s→30s 指数 + 随机抖动；`ConnectionState` 供 `service.status`/控制面板展示。
+- Invoke 需 drain（5s）再退出。
+- **Bridge 必须先停接收并 drain，再允许外层关闭 Runtime**（`bridgeWG.Wait()` 先于
+  `Runtime.Close`，见 execution-model 的启动/关闭编排）。
+
+## nexusclient（共享 HTTP 传输策略）
+
+与已配对 NexusDock 的通用 HTTP 传输：Bearer token、**token 不跨重定向传播**、有界响应体。
+消费方：`internal/tool/recall`（memory）与 `internal/tool/task` 的 nexus transport——
+领域路径/超时/错误语义归调用方所有，本包不拥有业务语义。

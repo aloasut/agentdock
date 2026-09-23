@@ -1,0 +1,64 @@
+---
+description: "桌面运行时 owner：5 个二进制图（core/arbiter/shim/tray/wsl-helper）、runtime.json manifest 权威描述与归属校验、desktopcontrol 本地 IPC（ping/service.status/tunnel.status 极窄方法面）、macOS launchd+SMAppService 与更新交接、Windows 托盘/控制面板/DPAPI 隧道凭据 / desktop runtime, tray, control panel, manifest, scheduled task, shim"
+kind: architecture
+code:
+  paths:
+    - internal/desktopruntime/manifest.go
+    - internal/desktopruntime/control.go
+    - internal/desktopcontrol/control.go
+    - internal/selfupdate/managed_desktop_darwin.go
+    - desktop/macos/AgentDockApp/Sources/AppDelegate.swift
+    - desktop/macos/AgentDockApp/Sources/ServiceController.swift
+    - desktop/windows/tray/app_windows.go
+    - desktop/windows/control-panel/Services/RuntimeService.cs
+    - cmd/agentdock-shim/main_windows.go
+    - cmd/agentdock-tray/main_windows.go
+---
+
+# 桌面运行时（二进制图、manifest、控制通道）
+
+## 二进制图（哪些平台有什么）
+
+| 二进制 | 平台 | 职责 |
+|---|---|---|
+| `agentdock` | 全平台 | 唯一 Core：CLI + MCP/HTTP + 本地控制 + Nexus 桥宿主；隐藏命令 `__update-finalize`、`__repair-desktop-runtime`、`__migrate-windows-legacy-layout`（仅 Windows） |
+| `agentdock-arbiter` | win/darwin | 更新事务仲裁器，必须是 known-good source（见 update-engine） |
+| `agentdock-shim` | 仅 Windows | 稳定入口；**同一份代码编译两次**：console 版装为 `bin/agentdock.exe`、windowsgui 版装为 `bin/agentdock-tray.exe`；运行时解析 active generation 转发；另有 `--setup-runtime-host`（Setup 提权上下文→用户会话 broker）与 `--task-core-host`（elevated 计划任务下的长期 Core 宿主，稳定 GUI shim 持 kill-on-close Job） |
+| `agentdock-tray` | 仅 Windows | 纯 Go Win32 托盘：**view/controller only**，per-user mutex 防重复图标，不做进程监督 |
+| `agentdock-wsl-helper` | 仅 linux/WSL | 文件操作助手（见 wsl-helper 文档） |
+
+Linux/容器只有 `agentdock` 单二进制。稳定 shim 不进在线更新事务（见 update-engine）。
+
+## desktopcontrol 是本地 IPC，不是"桌面 GUI 自动化"
+
+桌面 App ↔ 后台 Core 的本地 JSON-RPC 风格通道：Unix socket `<runtime-root>/control.sock` /
+Windows 命名管道（current-user ACL，名字含 runtime_root 哈希）。消息上限 1MB，响应 id 必须回显。
+**方法面刻意收窄：只有 `ping` / `service.status` / `tunnel.status`**——安装/卸载/提权留给系统安装器。
+仅在设置 `AGENTDOCK_RUNTIME_ROOT` 时启动，与 HTTP/MCP 同生命周期（见 execution-model）。
+浏览器自动化（Chromium CDP）与此无关，属 internal/tool/browser。
+
+## runtime.json manifest（桌面安装的权威描述）
+
+schema v1：安装根、二进制路径、端口、tunnel mode `none|quick|named`、privilege_mode
+`standard|elevated`+计划任务名。不变量：
+
+- generation core 必须通过 `active-version.json` 归属校验才能读 manifest（防任意旧 generation
+  伪装当前运行时）；
+- `resolveRuntimePaths` 把安装时记录的旧绝对路径收敛到 runtime.json 实际所在目录
+  （对抗 Windows MSIX/打包重定向）。
+
+## Windows 侧
+
+- **控制面板直连 HTTP `127.0.0.1:<port>`，不走 desktopcontrol 管道**。
+- Tunnel 凭据：DPAPI 加密 + `credential-owner-sid.txt` owner-SID 绑定——SID 必须与当前用户一致，
+  仅 Administrators 组授权不算数。
+- 服务托管模式探测顺序：Windows Service `agentdock` → 计划任务 → HKCU Run。
+- cloudflared 强制用 AgentDock 自己的最小空配置 `{}`，隔离用户 `~/.cloudflared/config.yml`。
+
+## macOS 侧
+
+- 菜单栏 Swift App（NSStatusItem）；core/tunnel 两个 launch agent（label `com.uvwt.agentdock`）
+  经 `agentdock` CLI + SMAppService 管理。
+- 更新深度耦合：handoff/result 文件交接 + 中断事务恢复 + 更新后恢复后台服务注册；
+  **handoff 只证明新 Bundle 能启动并恢复注册，不等于事务已提交**（见 update-engine）。
+- `LegacyDesktopRuntimeMigration`：0.8.x 早期散装 runtime 文件迁入 App Bundle 托管的一次性事务。

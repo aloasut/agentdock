@@ -1,0 +1,58 @@
+---
+description: "路径与文件边界 owner：host 路径模型（workspace 不是 jail）+ 四层权限边界、ResolveForWrite 的最深存在父目录 EvalSymlinks 防 symlink 穿越、workspace.Clean 非安全边界、securepath 加固原语、atomicfile 跨平台语义（Unix 故意不强制 0600）、filelock 只清自己形状的锁 / sandbox, path resolution, symlink, atomic write, file lock, securepath"
+kind: architecture
+code:
+  paths:
+    - internal/workspace/workspace.go
+    - internal/fs/securepath/private_unix.go
+    - internal/fs/securepath/private_windows.go
+    - internal/fs/atomicfile/write.go
+    - internal/fs/atomicfile/replace_unix.go
+    - internal/fs/atomicfile/replace_windows.go
+    - internal/fs/atomicfile/secure_unix.go
+    - internal/fs/filelock/filelock.go
+---
+
+# 路径与文件边界
+
+## 核心架构事实：workspace 不是 jail
+
+`PathModel=host`：文件工具 **有意允许操作整个用户可访问的真实文件系统**（`~` 路径、绝对路径、
+相对路径都被接受）。"显式权限边界"由四层共同实现，不存在目录白名单：
+
+1. 认证门（security/authentication）；
+2. OS 权限边界：AgentDock 自身持久状态经 `securepath.EnsurePrivate` 加固（Unix chmod 0600/0700；
+   Windows Protected DACL：仅当前用户+SYSTEM+Administrators，目录可继承）；
+3. 子进程环境白名单（security/env-isolation）；
+4. 对外发布走签名 URL（security/public-artifacts）。
+
+## Resolve 契约（文件工具必须先 Resolve 再动手）
+
+- 读路径：全链 `filepath.EvalSymlinks`。
+- **写路径**（`ResolveForWrite`）：目标不存在时，逐级上溯找最深存在父目录 → EvalSymlinks 真实父目录
+  → 再拼回不存在尾部——防止"不存在的路径下面藏着 symlink（符号链接）"的路径穿越/逃逸。
+- 拒绝文件系统根作为默认目录。
+- **`workspace.Clean` 是词法 helper，不是安全边界**（源码明文注释）——用它替代 ResolveForWrite
+  做安全判断是 bug。
+
+## atomicfile 跨平台语义（容易被错误"统一"）
+
+流程：同目录临时文件 → chmod → 写入 → fsync → rename。平台差异是隐藏决策：
+
+- Unix：rename 后 **额外 fsync 父目录**（断电可恢复）；**故意不强制 0600**——避免把 0700 的
+  可执行脚本降权（`secure_unix.go` 注释是唯一防线，重构时不得"顺手加固"）。
+- Windows：写入前先收紧临时文件 DACL；进程内串行化；只对 sharing/lock/access-denied 类错误做
+  16 次有界重试（`MoveFileEx REPLACE_EXISTING|WRITE_THROUGH`），真实权限/路径错误立即返回。
+
+## filelock（协作互斥）
+
+- 可移植跨进程锁 = owner 标记目录，**不是 flock**。
+- 不变量：**只清理本包创建形状的锁**（owner 名严格校验）——改 owner 文件命名格式会使旧锁永久不可回收。
+- 陈旧判定 = 10 分钟无心跳 + owner 文件内 PID 不存活；正常释放经过"空目录"瞬态，2 秒宽限期防误判；
+  Windows delete-pending 竞态用 `os.SameFile` 身份校验。
+- 对比：`internal/fs/processlock`（flock 封装）用于独占运行语义，两者不可混用。
+
+## 消费方义务
+
+新代码写 AgentDock 私有状态（home、env、oauth state、secrets）必须调用 `EnsurePrivate`；
+文件工具新增路径参数必须走 workspace Resolve；子进程环境继承见 env-isolation。

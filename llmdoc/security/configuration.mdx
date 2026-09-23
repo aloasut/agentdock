@@ -1,0 +1,46 @@
+---
+description: "配置模型速查：纯环境变量无配置文件、FromEnv→flags→Normalize→ValidateAuth 启动一次性完成、无热生效改配置必须重启、Normalize 的加固语义（0700+EnsurePrivate、拒绝相对路径）、Nexus 凭据单一来源 / configuration, env vars, startup validation, normalize, restart to apply"
+kind: reference
+code:
+  paths:
+    - internal/config/config.go
+    - internal/config/paths.go
+    - internal/config/environment_mapping.go
+    - docker-compose.yml
+---
+
+# 配置模型
+
+## 模型
+
+- **纯环境变量配置，没有配置文件**。唯一入口 `config.FromEnv()` 读 `AGENTDOCK_*`；
+  少量 CLI flag（host/port/log-level/browser/stdio）可覆盖。
+- 加载顺序固定且一次性：`FromEnv → flags → Normalize → ValidateAuth`。
+  **没有任何热生效——改配置 = 重启服务**（`agentdock service restart`）。
+- 具体变量名与默认值是 live facts，权威源是 `internal/config/config.go`，本文不抄写数值。
+
+## Normalize 不只是填默认值
+
+`Normalize()` 同时：
+
+- 创建并 **加固** `AgentDockHome` 与 `AgentDockDefaultDir`（mkdir 0700 + `securepath.EnsurePrivate`）；
+- 拒绝相对路径；校验 browser 可执行文件绝对路径/CDP URL scheme；规范化 CIDR 去重；校验 ACP profiles。
+- **任何失败 → 拒绝启动，不降级、不回退**（fail-closed 是全仓配置纪律，见 security 主题各篇）。
+
+## 启动期认证门
+
+`ValidateAuth()`：非 stdio + 无认证 + 非回环 bind → 拒绝启动（原理见 security/authentication）。
+OAuth 开启的强约束也在这里：`AGENTDOCK_SERVER_URL` 必须 origin-only（https 或回环 http）、
+password ≥12 字符、token secret ≥32 字节。
+
+## 凭据单一来源
+
+启动即 `Unsetenv` 旧 `AGENTDOCK_NEXUS_ENDPOINT/TOKEN`：Nexus endpoint/device token 只来自
+配对身份文件，杜绝 env/控制面板/配对文件多源漂移（见 nexus/nexus-bridge）。
+
+## 默认姿态
+
+- 默认 host `127.0.0.1`（本地-only 是安全默认）；browser/ACP/OAuth 默认关闭，MCP Apps 默认开启
+  ——这个"哪些默认关"的选择是有意的。
+- Docker 姿态（`docker-compose.yml`）：默认只绑 127.0.0.1、强制 `AGENTDOCK_AUTH_TOKEN`
+  ——容器里监听 0.0.0.0 必须显式认证。

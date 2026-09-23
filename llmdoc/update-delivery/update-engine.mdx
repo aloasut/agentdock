@@ -1,0 +1,67 @@
+---
+description: "自更新引擎 owner：updateengine 事务内核状态机（staged→trial→committed/rollback）、Windows generation 布局与稳定 shim 刻意不进更新事务、Arbiter known-good side-by-side、回滚是独立安全事务（WithoutCancel+3 分钟预算）、平台 Driver（RENAME_SWAP / source generation 停服切指针）、结果投影修复 / self update, generation layout, arbiter, rollback, update transaction"
+kind: architecture
+code:
+  paths:
+    - internal/updateengine/contract.go
+    - internal/updateengine/arbiter.go
+    - internal/updateengine/layout.go
+    - internal/updateplatform/swap_darwin.go
+    - internal/updateplatform/windows.go
+    - internal/selfupdate/update.go
+    - internal/selfupdate/generation_windows.go
+    - internal/selfupdate/apply_unix.go
+    - internal/selfupdate/apply_windows.go
+    - cmd/agentdock-arbiter/main.go
+---
+
+# 自更新引擎（事务内核、generation、Arbiter）
+
+## 三层职责
+
+- `internal/updateengine`：平台无关事务内核。状态机 `staged→trial→committed|rolling_back→rolled_back|failed`，
+  phase `stage/verify/activate/health/commit/rollback`；Transaction/Result/ActiveVersion 三份 JSON +
+  进程锁。`ValidateVersion` 保证版本串可安全作为单级目录名（Windows 会把 `v1.` 与 `v1` 归一成
+  同一目录——拒绝尾部点/空白/非法字符）。
+- `internal/updateplatform`：平台 Driver。macOS：同卷兄弟 App Bundle 用 `renameatx_np(RENAME_SWAP)`
+  一次事务原子交换 + SMAppService 重注册；Windows：所有停止动作经 **source generation** 执行，
+  旧 Core/Tunnel/Tray 完整退出后才切 active pointer（防端口双占）；更新后 GC 只保留 target+source。
+- `internal/selfupdate`：面向用户的 `agentdock update`。
+
+## 磁盘布局（Windows generation）
+
+`<root>/bin/agentdock.exe`（稳定 Core shim）+ `bin/agentdock-tray.exe`（稳定 Tray shim）+
+`versions/<v>/`（generation：core/tray/arbiter/core-skills/wsl-helper）+ `update/`（事务状态）+
+`runtime.json`。
+
+> 不变量：**稳定 shim 刻意不进在线更新事务**——shim 是等待更新完成的父进程，Windows 可能锁着它；
+> shim ABI 保持极小稳定，只经 Setup/repair 刷新。
+
+## Arbiter 与回滚（最微妙的决策）
+
+- Arbiter（`cmd/agentdock-arbiter`）是独立二进制，必须是 known-good source version、从
+  **source generation** 启动（side-by-side，不覆盖正在运行的 update CLI），3 分钟预算，
+  结果写 journal + stdout JSON。
+- **回滚是独立安全事务**：`context.WithoutCancel` + 自己的 3 分钟预算——否则 trial 超时边缘失败时
+  会把"物理已换回、journal 记 failed"的半恢复固化。
+- **结果投影修复**：Arbiter 进程非零退出但 durable commit 已发生时，ReadResult 投影修复——
+  不能把 committed 误报为 failed；终态以 journal/result 为准。
+- macOS 桌面：App 间 handoff 文件只证明新 Bundle 能启动并恢复注册，**不等于事务已提交**；
+  最终成功只认 update-result/journal。
+
+## shim 崩溃恢复
+
+trial 状态 + 无存活锁 → 用 source Arbiter 保守回滚；installer trial 需持 `install/transaction.lock`
+才允许 shim 路由到未提交 generation。
+
+## 自更新流程约束
+
+GitHub Releases latest；下载体积上限（release 256MB / desktop 512MB / 解压 payload 64MB）；
+sha256 校验；应用前跑新二进制 `--version` 验证；vdev 构建拒绝自更新；不执行降级。
+Windows 控制面板与核心同 ZIP，复用已校验归档避免重复下载数百 MB。
+
+## 平台差异速查
+
+Unix（非 generation）：备份旧二进制→替换→按托管服务检测结果重启→health，失败恢复旧版本。
+Linux/容器只有单二进制。Windows flat 旧路径走 `__update-finalize` helper detached 替换
+（`restartMode` 探测顺序 service→task→native→launcher→none）。

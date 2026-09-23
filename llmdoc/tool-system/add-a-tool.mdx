@@ -1,0 +1,46 @@
+---
+description: "新增 MCP 工具的操作指南：schema 放哪（canonical→agentdock-protocol，非 canonical→能力包 contract.go）、specs 注册五步 checklist、防漂移测试如何变红、启动 fail-fast 验证 / add a new tool, tool checklist, schema drift test"
+kind: guide
+relations:
+  requires:
+    - tool-system/tool-runtime.mdx
+code:
+  paths:
+    - internal/app/specs_registry.go
+    - internal/app/mcp_contract_test.go
+    - internal/app/contract_drift_test.go
+---
+
+# 新增一个工具
+
+先读 [tool-runtime](tool-runtime.mdx) 理解注册与契约所有权，再按本清单操作。
+
+## 何时不用本流程
+
+改的是 canonical 工具的协议面（InputSchema/OutputSchema/Annotations 语义）→ 契约 owner 在
+`agentdock-protocol` 仓库的 mcpcontract，本仓库只是消费方 + 防漂移测试方；去那边改，
+回来同步测试期望。
+
+## 步骤
+
+1. **schema**：非 canonical 工具 → 对应 `internal/tool/<cap>/contract.go` 提供 Input/Output
+   schema（两者都必须非空，contract_drift_test 强制）；记住根 schema 决策：输入 strict、输出 open。
+2. **行为**：`internal/tool/<cap>/service.go` 实现 + `request.go` 定义强类型请求
+   （走 `typedToolHandler[T]` 解码，不要在 handler 里手工断言 map）。
+3. **注册**：`internal/app/specs_<capability>.go` 加 ToolSpec。新能力域则新建 specs 文件 +
+   `specs_registry.go` 追加分组 + `specs_contract.go` 加 contract provider。
+4. **装配**：`internal/app/runtime.go` 的 NewRuntime 里 new Service、挂 Runtime 字段，
+   并在 Close 次序中补关闭（次序约束见 execution-model）。
+5. **MCP Apps UI（可选）**：`internal/mcp/apps.go` + protocol 的 UIResourceContract。
+6. **canonical 工具**：同步 `internal/app/mcp_contract_test.go` 期望——schema 与 mcpcontract
+   逐字段 DeepEqual，漂移直接打红。
+
+## 验证
+
+- `make check`（含 go test + vet）。
+- 启动验证：schema 不可编译会在启动时 fail-fast（拒绝启动），不会带病运行。
+- 注册表防御：空名/缺 contract/缺 handler/重名会在包初始化时 panic——测试期就会暴露。
+
+## 回滚
+
+工具注册是纯编译期改动，回滚 = revert 提交；无持久化状态需要清理。

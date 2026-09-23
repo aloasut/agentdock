@@ -1,0 +1,60 @@
+---
+description: "ACP 运行时 owner：自研 JSON-RPC over stdio 连接、cancel 只标记意图、StartPrompt dispatched 等待、有界事件环形缓冲（512 条/4MiB + ACP_CURSOR_AHEAD）、interaction 永不阻塞协议、session 持久化与崩溃恢复（running→interrupted）、transcript 归属 adapter 的隐私边界 / acp session, prompt run, steering, interaction, crash recovery"
+kind: architecture
+code:
+  paths:
+    - internal/acp/manager.go
+    - internal/acp/connection.go
+    - internal/acp/prompts.go
+    - internal/acp/interactions.go
+    - internal/acp/store.go
+    - internal/acp/types.go
+    - internal/acp/history.go
+    - internal/tool/acp/service.go
+---
+
+# ACP 运行时（会话、run、interaction、恢复）
+
+`internal/acp` 是 **自研 JSON-RPC over stdio**（不用 SDK）：Manager 拥有单 adapter 进程生命周期，
+session/run/interaction 是内存状态机 + JSON 文件持久化。这是本仓库维护风险最高的子系统，
+改动任何时序前先读本页与源码注释。
+
+## 时序决策（不可调换）
+
+- **cancel 只标记意图**：不取消 JSON-RPC request。ACP 规定 cancel 后仍会来最后一批 update 并以
+  `stopReason=cancelled` 收尾；提前移除会丢事件。
+- **StartPrompt 返回前等待 `dispatched`**（prompt 已写入连接）：否则紧随的 cancel notification
+  可能抢在 prompt 前到达 adapter，被当"无 turn"消费，原 prompt 永久悬挂。
+- **adapter 进程生命周期独立于请求 ctx**：adapter 必须活过启动 ctx（`exec.Command` 处显式 nolint）；
+  initialize 限时 20s。
+- 关机次序（finishRun(RunInterrupted) 先于 cancel）见 execution-model。
+
+## 事件与容量（不谎称无损）
+
+- 有界环形缓冲：512 条 / 4MiB；单 update 512KiB 截断留 preview。
+- cursor 落在已丢弃区间 → 显式报 `ACP_CURSOR_AHEAD` 并给 DroppedCount/Truncated。
+- interaction 永不阻塞协议：超时/关机/超限一律回 cancelled outcome（静默降级为拒绝是安全默认）。
+  上限：32 选项/interaction、32 全局 pending、8 每 session、toolCall ≤256KiB。
+
+## 持久化与恢复
+
+- session 文件按 agent 哈希目录隔离（防跨 adapter 串状态）、schemaVersion 校验、1MiB 上限、
+  只接受非符号链接普通文件（防路径注入）。
+- 启动时把 `running` 改写为 `interrupted(agentdock_restart)`：进程死亡 ≠ 会话关闭。
+- 断连恢复：Manager 检测连接已 closed → 重建 adapter 进程、清空 loaded/projections；
+  session 记录仍在磁盘，下次激活走 resume/load（capability 协商）。
+- codex 无 rollout 时报 `ACP_SESSION_NOT_PERSISTED`，**不伪装成功**（对照 adapter-compatibility）。
+
+## transcript 与隐私
+
+transcript 归属 adapter（`history_owner=adapter`）：AgentDock 不持久化、不回放 transcript，
+只在 load 调用内暂存（≤4096 事件/8MiB），并过滤 `agent_thought_chunk`（隐私边界）。
+`CurrentPolicies()` 把执行常量导出为机器可读 policy——客户端引导与服务端行为同源，防文档漂移。
+
+## 失败语义
+
+- 协议违规（JSON-RPC 版本缺失/响应无 ID/解码失败）→ **立即 finish 连接**（fail-fast，防消息错位）。
+- 远端错误 → `ACP_REMOTE_ERROR`（不可重试）带 rpc_code/rpc_data；入站请求有 recover → -32603。
+- 连接关闭 → 所有 pending 以 `ACP_CONNECTION_CLOSED`（retryable）失败；EOF 是正常终态（关机路径），
+  意外失败附 redact 后的 stderr tail。
+- Windows 平台差异：匿名管道 reader 关闭会死锁 → finish() 同步发布终态、后台关 reader。

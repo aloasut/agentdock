@@ -1,0 +1,65 @@
+---
+description: "认证与 OAuth owner：Bearer 常量时间比较、OAuth PKCE+refresh 代际轮换+重放吊销、明文令牌永不落盘、启动期 ValidateAuth 公共暴露门、逐 handler 内联认证模式（新增端点必须复制）、匿名端点白名单、限流与受信代理 / authentication, bearer, oauth, token rotation, anonymous endpoints, rate limit"
+kind: architecture
+code:
+  paths:
+    - internal/auth/bearer.go
+    - internal/auth/oauth_manager.go
+    - internal/auth/oauth_token_store.go
+    - internal/auth/oauth.go
+    - internal/httpx/oauth.go
+    - internal/httpx/mcp_endpoint.go
+    - internal/httpx/request_limit.go
+---
+
+# 认证与 OAuth
+
+## 两条认证路径
+
+- **Bearer**：token 唯一来源 env `AGENTDOCK_AUTH_TOKEN`；常量时间比较；无自动轮换——
+  轮换 = 改 env + 重启。
+- **OAuth 2.0**：authorization code + 强制 PKCE（仅 S256）+ refresh token 代际轮换；
+  栈基于 go-oauth2，`internal/auth/oauth_manager.go` 映射 store。
+
+`AuthRequired()` = 有 token 或 OAuth 开启；两者皆无允许匿名（本地回环姿态的代码表达）。
+
+## 公共暴露门在启动期（不在请求路径）
+
+`config.ValidateAuth()`：非 stdio + 无任何认证 + bind host 非回环 → **拒绝启动**
+（"AgentDock 暴露命令和文件写入能力，非回环无认证不是可接受的默认配置"）。
+README 的"公共访问必须保持认证开启"落点在这里，而不是请求中间件。
+
+## 逐 handler 内联认证模式（最高维护风险）
+
+**没有认证 middleware。** 每个受保护 handler 内联同一段判定（bearer OK + oauth OK），
+当前落点：`internal/httpx/mcp_endpoint.go`（/mcp、/context）、`internal/httpx/runtime_api.go`。
+
+> 不变量：**新增受保护端点必须手动复制这段判定，漏写即匿名暴露。**
+> `middleware.go` 只是日志 middleware，且有意不记录 header/body（防 token/授权码/工具参数入日志）。
+
+匿名可达白名单：`/`、`/healthz`、`/.well-known/*`、`/register`、`/oauth/*`、`/artifacts/public/`。
+
+## OAuth 令牌生命周期（隐藏决策密集区）
+
+- 状态文件 `<home>/oauth/state-v1.json` 仅在 OAuth 启用时使用；不认识的版本 **拒绝启动**
+  （不做静默迁移）。损坏/超限同样 fail-closed 拒绝启动，宁可人工修复。
+- **任何明文令牌不落盘**：授权码只在内存；access token 只存 SHA-256 哈希；refresh token 只存
+  HMAC 签名的"代际（generation）"。
+- refresh 重放（旧 generation）→ **吊销整个 grant**；已兑换授权码再现 → 吊销 code family。
+- access TTL 默认 1h（env 可调或 `never`）；`never` 时响应给客户端的 `expires_in` 写成极远有限值
+  ——这是为 ChatGPT 兼容的刻意行为，不要"修复"。
+- 动态客户端注册（RFC 7591 风格）：ID 前缀 `adcr_`；redirect_uri 只允许 https 或回环 http；
+  客户端 180 天空闲过期（旧状态缺 last_used_at 时补全窗口而非踢掉——升级兼容）。
+- Resource 绑定（RFC 8707）：唯一 protected resource 固定 `issuer + "/mcp"`；省略 resource 时
+  绑定到该值，显式提供必须规范化相等。
+
+## 限流与受信代理
+
+`/register` 30 次/分钟、`/oauth/authorize` POST 10 次/5 分钟（固定窗口）。只有直接对端 IP ∈
+`AGENTDOCK_TRUSTED_PROXY_CIDRS` 才信任 `X-Forwarded-For` 链，且链中有不可解析项立即回退直接对端
+——不能部分信任。
+
+## 失败语义
+
+认证失败 401 + `WWW-Authenticate: Bearer`（OAuth 开启附 resource_metadata；坏 token 附
+`error="invalid_token"`）。OAuth 失败日志只记固定枚举 reason，不落 client secret/授权码/回调地址。

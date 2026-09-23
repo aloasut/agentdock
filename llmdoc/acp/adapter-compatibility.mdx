@@ -1,0 +1,38 @@
+---
+description: "ACP adapter 兼容性台账：按身份+精确版本区间的门控（claude-agent-acp ≤0.64.2、codex-acp ≤1.1.9 steering 降级）、codex 假成功检测、修复版自动回归原生行为、CurrentPolicies 契约导出 / adapter compatibility, version gate, codex, claude, steering fallback"
+kind: reference
+relations:
+  related:
+    - acp/acp-runtime.mdx
+code:
+  paths:
+    - internal/acp/compatibility.go
+    - internal/acp/policies.go
+---
+
+# Adapter 兼容性（版本门控与 workaround 台账）
+
+## 门控模型
+
+兼容层按 **adapter 身份 + 精确版本区间** 门控（`internal/acp/compatibility.go`），不是全局开关：
+
+- `claude-agent-acp` ≤0.64.2：steering 降级路径。
+- `codex-acp` ≤1.1.9：steering 降级；首轮无 rollout 时的 close/load 重建分支。
+- 新版本修复后自动回归原生行为——**给适配器发新版后应收敛/删除对应门控**，台账只减不增是目标。
+
+## 已知 workaround（查表）
+
+| 症状 | 根因 | 处理 |
+|---|---|---|
+| codex 重试耗尽后 turn 仍正常结束（假成功） | codex-acp 不把远端错误反映为失败 | 比对最后 assistant chunk 与已记录远端错误文本，命中则判失败（`internal/acp/types.go` + prompts.go） |
+| codex 会话恢复后无历史 | 首轮无 rollout 文件 | close/load 重建分支；无 rollout 时显式 `ACP_SESSION_NOT_PERSISTED` |
+
+## Policy 导出契约
+
+`CurrentPolicies()`（`internal/acp/policies.go`）把执行常量（事件上限、超时等）导出为机器可读
+policy，供客户端引导与服务端行为同源——改这些常量时 policy 输出同步变化，禁止在文档里手工抄写数值。
+
+## 维护义务
+
+新增 workaround 时：在 compatibility.go 落版本区间 + 在本表登记症状/根因/处理；
+升级依赖时：验证门控是否可以收窄。

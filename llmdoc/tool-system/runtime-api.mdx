@@ -1,0 +1,37 @@
+---
+description: "Runtime API 速查：internal/runtimeapi 的传输无关 Runtime 契约（HTTP 与 Nexus Bridge 共用）、请求体 64KiB/DisallowUnknownFields/单 JSON 值纪律、可选字段显式转发原则、Stage3 只能 propose 的演化限制 / runtime api, dispatch, internal endpoints"
+kind: reference
+code:
+  paths:
+    - internal/runtimeapi/runtime.go
+    - internal/runtimeapi/dispatch.go
+    - internal/app/runtime_api.go
+    - internal/httpx/runtime_api.go
+---
+
+# Runtime API（传输无关内部契约）
+
+## 契约与共享
+
+`internal/runtimeapi/runtime.go` 定义 `Runtime` interface + `Request{Method,Path,Query,Body}` +
+`Dispatch` 路由，**传输无关**：HTTP（`/internal/runtime/*`）与 Nexus Bridge（桌面控制面/远端节点）
+都只依赖这份契约；两条路径最终与模型工具汇入同一份公共实现（`internal/app/runtime_api.go`）。
+改工具语义时先查这里，避免 HTTP 与 Nexus 行为分叉。
+
+## 请求纪律（不变量）
+
+- 请求体 ≤64KiB、`DisallowUnknownFields`、必须恰好一个 JSON 值。
+- 可选字段只在显式提供时转发：Go 零值不得被解释成 schema 里有语义的空值
+  （`internal/runtimeapi/dispatch.go` 头注释）。
+
+## 错误语义
+
+- 路由不存在 → `NOT_FOUND`（not_found）；方法不允许 → 405（`MethodAllowed`/`AllowHeader`
+  是同一份方法契约的两个出口）；body 超限/未知字段 → validation 错误。
+- 未认证 → 401 + `{"ok":false,"code":"UNAUTHORIZED"}`。认证判定内联在
+  `internal/httpx/runtime_api.go`，模式与新增端点的义务见 security/authentication。
+
+## 演化权限限制
+
+Nexus Stage 3 经 Runtime API **只能 propose** evolution 候选，source 强制标记 `nexus-stage3`；
+投票与生命周期变更不外放（`internal/app/evolution.go`）。策略细节见 task-evolution/evolution-policy。

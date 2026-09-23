@@ -1,0 +1,71 @@
+---
+description: "仓库级执行模型 owner：cmd/agentdock 启动链、传输同生命周期并行（HTTP+desktopcontrol+Nexus bridge）、Runtime.Close 关闭次序不变量、子进程绑定共享 commandCtx 而非请求 ctx、进程组 killpg 语义 / startup chain, graceful shutdown, close ordering, process group, runtime lifecycle"
+kind: architecture
+code:
+  paths:
+    - cmd/agentdock/main.go
+    - cmd/agentdock/server.go
+    - internal/app/runtime.go
+    - internal/tool/command/close.go
+    - internal/process/process_unix.go
+    - internal/process/process_windows.go
+---
+
+# 执行模型（启动、生命周期、关闭次序）
+
+## 职责边界
+
+本文是仓库唯一的根级执行模型文档：所有子系统都必须遵守的进程生命周期契约。
+`cmd/agentdock` 是薄启动壳（手写子命令分发，不用 CLI 框架）；`internal/app.Runtime`
+是聚合根，拥有工具注册、校验与 **唯一的关闭编排**；`internal/mcp` 只管协议，不做校验/权限。
+
+## 启动链与顺序决策
+
+1. `main()` → `signal.NotifyContext(SIGINT, SIGTERM)` → `run()` 手写分发。
+2. 先拦截 selfupdate 保留内部命令（`__update-finalize` 等，见 update-engine 文档），再分发
+   version/update/service/tunnel/config/skill/nexus/install；无子命令 → `runServer`。
+3. `runServer` 固定顺序：`config.FromEnv → flags → Normalize → ValidateAuth`（非法配置拒绝启动，
+   见 security/configuration）；随后主动 `Unsetenv` 废弃的 `AGENTDOCK_NEXUS_ENDPOINT/TOKEN`
+   —— Nexus 凭据只来自配对身份文件，不接受环境变量第二来源（见 nexus/nexus-bridge）。
+4. 先 `app.NewRuntime` 再 `mcp.NewServer`：工具集在进程生命周期内是 **静态的**，启动时一次性注册。
+
+## 传输并行生命周期
+
+- stdio 模式：SDK 用 `context.Background()` 跑；信号只让 main 返回，靠进程退出收尾。
+- HTTP 模式：设置 `AGENTDOCK_RUNTIME_ROOT` 时，`httpx.Serve` 与 `desktopcontrol.Serve`
+  **同生命周期并行**，任一退出即 cancel 另一个（禁止后台只剩半套控制面）。
+- 存在配对身份时另起 nexusbridge goroutine；`bridgeWG.Wait()` 必须先于 `Runtime.Close`
+  —— Bridge 必须先 drain 再关 Runtime。
+
+## Runtime.Close 次序（不变量）
+
+`internal/app/runtime.go` 的 `Close` 是唯一关闭编排点，顺序不可调换：
+
+1. `command.BeginClose()` 关闭新启动入口 → `WaitForStarts`（3s 启动窗口排空）。
+   **期间不得持有 lifecycleMu 等待**——否则与启动路径读生命周期状态形成锁序死锁。
+2. 取消共享 commandCtx（理由见下）。
+3. `acp.Close` → `browser.Close` → `command.Close`（等 reservation 释放后 killAll）→ `dynamicMCP.Close`；
+   错误用 `errors.Join` 聚合。
+
+ACP 关机的专门次序：对每个 running run **先 `finishRun(RunInterrupted, "agentdock_shutdown")` 再 cancel ctx**，
+防止请求 goroutine 抢先把关机写成正产取消。
+
+## 子进程生命周期（最重要的单点决策）
+
+子进程（命令执行、ACP adapter）绑定 **共享 commandCtx，不绑定单次 MCP 请求 ctx**。
+`exec_command` 会先返回 running 让模型后续观察；绑定请求 ctx 会在请求结束时杀掉
+`git push`、`npm install` 等长任务。长任务只受 `timeout_ms` 与 session `kill`/`kill_all` 控制。
+同理，HTTP 请求取消（`PropagateRequestCancellation`）只取消该次工具调用，不牵连已启动的子进程。
+
+## 进程组与平台差异
+
+- 每个命令一个专用进程组；`internal/process` 终止走 killpg，有界重试 5 次 × 1ms。
+- Darwin 对 zombie 进程组的 EPERM 在重试后视为成功（shell fork 窗口内新生子进程可能躲过首次 SIGKILL 快照）。
+- Windows 用 ConPTY 对应实现。core 进程本身 **不做** 单实例仲裁与端口抢占——桌面端单实例由
+  shim/arbiter 负责（见 desktop/desktop-runtime）；端口冲突表现为 ListenAndServe 失败并进程退出。
+
+## 其他全仓纪律
+
+- stdout = 稳定机器事件流；人类可读日志走 stderr（桌面端无需解析文案）。
+- HTTP 优雅退出：`Shutdown(10s)`，超时降级 `Close`。
+- 版本单一事实源：`internal/buildinfo.Version`（发布完整性约束见 update-delivery/release-integrity）。

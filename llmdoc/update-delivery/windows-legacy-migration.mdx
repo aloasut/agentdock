@@ -1,0 +1,60 @@
+---
+description: "Windows 旧版 flat→generation 布局迁移操作指南：触发条件（flat 入口或 compat manager 仍在）、同版本才能迁移、排他 mutex、先建 committed source generation 再换 stable 入口的次序不变量、等旧 updater 进程退出、失败恢复保留现场 / windows legacy migration, flat layout, manage-windows.ps1, migration"
+kind: guide
+relations:
+  requires:
+    - update-delivery/update-engine.mdx
+code:
+  paths:
+    - internal/selfupdate/legacy_migration_windows.go
+    - internal/selfupdate/repair_desktop_windows.go
+    - internal/installer/legacy_windows.go
+    - packaging/windows/compat/manage-windows.ps1
+---
+
+# Windows 旧版布局迁移（flat → generation）
+
+一次性桥接：把 v0.8.2/0.8.3 旧 updater 的 **flat 布局**（无 `versions/` 目录）迁到 generation 布局。
+先读 update-engine 理解 generation 布局与事务模型。
+
+## 触发与不该用时
+
+`windowsLegacyMigrationNeeded`：入口是 flat stable core，**或** 已是 generation core 但旧 updater
+装的 compatibility manager（`<root>/installer/manage-windows.ps1`）仍在——该脚本被刻意当作
+"持久完成标记"，删除才算迁移终结。这不是通用升级路径；别把它当更新机制扩展。
+
+## 硬性规则
+
+1. **只迁同版本**：下载"与运行 Core 完全同版本"的 Release 并校验（VerifyBinary）；
+   **绝不在服务启动修复时顺带升级**；非 latest 时静默跳过，等下次启动重试。
+2. **排他**：helper 持 `Local\AgentDockLegacyMigration` mutex 贯穿全程；
+   `windowsLegacyMigrationInProgress` 让恢复重启的新 Core 不递归再发起第二轮迁移。
+3. **等外部世界**：等 ParentPID 退出（30s）+ 等 **旧 updater `agentdock-update-helper.exe` 进程退出**
+   （30s）——两套更新器不得同时操作同一组文件。
+
+## 次序不变量（不可调换）
+
+1. `installer.PrepareWindowsLegacyGeneration` 先建 **committed source generation**
+   （Core/Tray 来自已装 known-good；Arbiter/wsl-helper 来自新 payload；WriteActive 是最后一步；
+   失败留下的孤儿 generation 可安全幂等替换）；
+2. 备份 stable 入口；
+3. 停服务/进程；
+4. 替换 stable entry 为 shim；
+5. 路由验证 → 重启；
+6. **成功后最后**删除 compat manager（完成标记）。
+
+## 失败恢复
+
+restore 闭包按序恢复 Tray/Core 备份并拉起 known-good；恢复不完整时报错并 **保留恢复目录与
+source generation** 供下次重试（不要清理现场）。
+
+## 关联工作流
+
+- 桌面组件补齐（`__repair-desktop-runtime`，`Local\AgentDockDesktopRepair` mutex）：旧 updater 只换
+  Core 不换控制面板的过渡态，按 Core 同版本补齐桌面组件后才能进入迁移；以 detached 后台进程启动，
+  **绝不在 Core 启动路径同步下载**（慢网络会让旧 helper 误判健康失败而回滚）。
+- `moveFileReplace`：Defender/索引器/刚退出进程的瞬时共享锁只对
+  `ERROR_ACCESS_DENIED|ERROR_SHARING_VIOLATION|ERROR_LOCK_VIOLATION` 做 16 次递增短重试；
+  真实权限/路径错误立即返回。
+- 端到端验证：`scripts/test/test-windows-legacy-online-migration.ps1`（windows-installer.yml 门禁）；
+  fixture 里的 `credential-owner-sid.txt` 是 DPAPI 凭据 owner SID 标记（CI TEMP ACL 不含 runner 用户）。

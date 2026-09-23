@@ -1,0 +1,61 @@
+---
+description: "Skill 契约速查：SKILL.md frontmatter 字段必填 name/description 可选 license/compatibility/metadata/allowed-tools、包禁止项（symlink/.env/agentdock.yaml）、三来源 skill://managed|shared|workspace 精确引用不静默覆盖、skill_manage 唯一变更工具与 purge 语义、SKILL_DATA_DIR 数据注入 / skill package, SKILL.md, skill_ref, skill_manage, frontmatter"
+kind: reference
+relations:
+  related:
+    - skills/skill-content-model.mdx
+code:
+  paths:
+    - internal/skill/skilldoc.go
+    - internal/skill/validate.go
+    - internal/tool/skill/service.go
+    - internal/tool/skill/contract.go
+    - core-skills/skill-authoring/references/skill-package-spec.md
+    - core-skills/skill-installation/references/skill-security-review.md
+---
+
+# Skill 契约（包格式、引用、工具面）
+
+包格式的权威成文规范是 `core-skills/skill-authoring/references/skill-package-spec.md`
+（本主题不重复其细节）；安全审查规范见 `core-skills/skill-installation/references/skill-security-review.md`。
+
+## SKILL.md frontmatter
+
+- 必填字段：`name`、`description`。可选字段：`license`、`compatibility`、`metadata`、`allowed-tools`。
+- `metadata.version` 即使存在也只是普通作者元数据，AgentDock 不读（内容模型无版本，
+  见 skills/skill-content-model）。
+
+## 包禁止项
+
+拒绝 symlink、特殊文件、`.env`、`.agentdock-install.json`、legacy `agentdock.yaml`。
+
+## 三来源与 skill:// 精确引用（不变量）
+
+| 来源 | URI | 权限 |
+|---|---|---|
+| managed | `skill://managed/<name>`（`~/.agentdock/skills/`） | 唯一可安装/更新/卸载/配环境/配数据 |
+| shared | `skill://shared/<name>`（`~/.agents/skills/`） | 只读发现 |
+| workspace | `skill://workspace/<sourceID>/<name>`（`<ws>/.agents/skills/`） | sourceID 由运行时签发，模型不得自拼 URI 逃逸到任意工作区（`SKILL_PATH_ESCAPE` 防父路径逃逸） |
+
+> **同名不同来源不能静默覆盖**；宿主返回的 `skill_ref` 是精确引用，模型不得用裸名称重建优先级。
+
+## skill_manage（唯一变更类工具）
+
+action 枚举：`install | remove | env_set | env_unset | env_list`。
+
+- `remove` 默认 **保留** 环境与持久数据；仅显式 `purge: true` 才删除
+  （数据路径用 `os.OpenRoot` 限定在 AgentDockHome 内）。
+- env 值永不回显；env/data 独立于包内容：env 在 envstore skill scope（见 security/env-isolation），
+  数据目录经保留变量 `SKILL_DATA_DIR` 注入 exec 子进程；只有 managed 候选享受 env/data。
+
+## 加载与执行模型
+
+Skill 本体是 **模型可读的说明文档**，真实操作由其他 MCP 工具（exec/file/browser 等）以同一
+`skill_ref` 执行。Acquire（managed 加 read lease 并验证 SKILL.md name 一致）→
+`ResolveResource`（`skill://.../<relative>`，EvalSymlinks + Rel 防逃逸）→
+运行时文件列表 / 256KB UTF-8 文本预览。
+
+## 内置三 skill 的角色
+
+`agentdock-user-guide`（官方用户指南）、`skill-authoring`（创建规范 + 包规范）、
+`skill-installation`（安装/安全审查规范）。

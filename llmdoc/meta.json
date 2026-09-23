@@ -1,0 +1,93 @@
+{
+  "schema": "llmdoc.meta/v3",
+  "baseline": {
+    "revision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec",
+    "verifiedAt": "2026-09-23T00:58:10.755Z"
+  },
+  "documents": {
+    "acp/acp-runtime.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "acp/adapter-compatibility.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "desktop/desktop-runtime.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "desktop/wsl-helper.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "engineering/script-governance.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "engineering/testing-and-ci.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "execution-model.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "nexus/nexus-bridge.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "security/authentication.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "security/configuration.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "security/env-isolation.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "security/path-boundary.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "security/public-artifacts.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "skills/skill-content-model.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "skills/skill-contract.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "task-evolution/evolution-policy.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "task-evolution/task-state.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "tool-system/add-a-tool.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "tool-system/context-tools.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "tool-system/mcp-surface.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "tool-system/runtime-api.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "tool-system/tool-runtime.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "update-delivery/install-engine.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "update-delivery/release-integrity.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "update-delivery/update-engine.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    },
+    "update-delivery/windows-legacy-migration.mdx": {
+      "validatedRevision": "174237ab29545cfbb091fcaeb28e5d8eb5da3dec"
+    }
+  },
+  "convergence": {
+    "capturedAt": "2026-09-23T00:49:02Z",
+    "source": "init",
+    "documentCount": 26,
+    "totalEstimatedTokens": 9286
+  }
+}

@@ -1,0 +1,61 @@
+---
+description: "Evolution 策略 owner：稳定身份哈希去重（多节点无 leader 并发）、只做精确去重禁止语义合并、生命周期 provisional→active→verified/quarantine、防自证硬规则 ErrSelfProof 与 blinded binding、learning check 执行前预绑定、Stage3 外部模型只有提案权、Nexus CAS 客户端边界 / evolution, anti-self-proof, learning check, lifecycle, nexus cas"
+kind: architecture
+relations:
+  requires:
+    - task-evolution/task-state.mdx
+code:
+  paths:
+    - internal/evolution/service.go
+    - internal/evolution/client.go
+    - internal/evolution/contract.go
+    - internal/app/evolution.go
+    - internal/tool/task/evolution_hooks.go
+    - docs/self-evolution-architecture.md
+---
+
+# Evolution 策略（知识演化与防自证）
+
+三阶段自进化架构的权威设计文档是 `docs/self-evolution-architecture.md`
+（Stage1 会话内 propose / Stage2 任务 Guidance+Evaluation / Stage3 Nexus 外部低频补漏、隐私边界、
+"明确不建设"清单）——本文只记策略硬规则，不复述架构。
+
+## 定位与存储边界
+
+`internal/evolution` 是 **策略引擎 + NexusDock lifecycle API 客户端**，不是本地存储：
+记录本体存在 NexusDock（`/internal/recall/lifecycle/query|transition`），CAS revision +
+operation_id 幂等；HTTP 409 `LIFECYCLE_REVISION_CONFLICT` 映射 `ErrRevisionConflict` 重试 ≤3 次。
+未配对 Nexus（无 endpoint/token）直接报错。8s 超时 + 4MiB 响应上限。
+
+## 身份与去重（硬规则）
+
+- 稳定身份哈希：`evolution_id = evo_sha256(type|scope|project|device|canonical_key|statement)`
+  ——多节点并发提同一候选竞争同一 CAS 路径，**无需 leader**；冲突后重读仅在身份完全匹配时判幂等，
+  哈希碰撞不得静默吞掉。
+- **只做精确去重**（canonical_key/statement 全等）：禁止模型或模糊检索擅自语义合并。
+
+## 生命周期状态机
+
+`provisional / active / verified / quarantine / retired`：
+
+- contradict → quarantine（一票否决）；support ≥3 → verified，≥2 → active。
+- `workflow_template`/`skill` 类型及 `nexus-stage3` 来源一律 initial provisional——
+  **Stage 3 外部模型只有提案权**，不能借类型分流拿到 active。
+
+## 防自证（anti-self-proof，防止模型给自己的结论投票/背书）
+
+- `ErrSelfProof`：带 support 的 learning check 目标若已被本任务见过（guidance seen）或派生自
+  （source_templates）即拒绝；被 support 绑定的目标在其任务全生命周期内从 Guidance 中隐去
+  （blinded validation）。
+- **learning check 必须执行前预绑定**（on_success/on_failure 取值 `support`/`contradict`/`none`，
+  ≤3 个，至少一侧产出证据）；final_review 的 pass/failed 只用于选择预声明分支，
+  **本身不带 support/contradict 语义**；assess 必须匹配预绑定关系，且 evidence_ref 必须属于
+  当前 final_review。
+
+## 工具面与旁路定位
+
+- `evolve` 工具输入 **刻意不接受** lifecycle 状态与证据计数（`intentionally not accepted`）——
+  状态推进只走 assess 语义。
+- Task 侧所有 evolution 调用都是 best-effort（`evolution_hooks`），失败不阻塞任务本身；
+  但挂点的绑定时机约束见 task-state。
+- `PolicyVersion="v1"` 与 Nexus 状态机耦合——改状态机语义需同步评估版本策略。

@@ -1,0 +1,43 @@
+---
+description: "测试与 CI 速查：三层测试（包内 Go / scripts-test Go 包内容契约 / 平台 E2E 脚本）、平台测试命名与 build tag 约定、make check 门禁组成、ACP 专项 race、断言跟随权威实现原则 / test layout, ci gates, platform tests, make check, browser_integration"
+kind: reference
+code:
+  paths:
+    - Makefile
+    - .github/workflows/ci.yml
+    - scripts/test/check-scripts.sh
+    - scripts/test/ci_workflow_test.go
+    - scripts/test/logging_policy_test.go
+---
+
+# 测试与 CI
+
+## 三层测试
+
+1. **包内 Go 测试**：标准 `go test ./...`，与被测包同目录；CI 多 OS 矩阵 + `go test -race`
+   （Linux 全量；ACP 有专项 `-race ./internal/acp`）；浏览器集成用 build tag `browser_integration` + xvfb。
+2. **scripts/test 作为 Go 包**：用 Go 测试断言脚本/配置/工作流的 **内容契约**
+   （governance、logging、docker、tunnel、windows installer 等）。
+3. **平台 E2E 脚本**：真实平台行为留给 `scripts/test/` 下 PowerShell/shell
+   （Windows Setup/Task Scheduler/DPAPI、macOS App、Linux VPS），Go 单测不做真平台断言。
+
+## 平台测试组织约定
+
+- 文件名后缀：`*_windows_test.go` / `*_unix_test.go` / `*_other_test.go` / `*_macos_test.go`；
+- build tag：`//go:build unix`、`browser_integration`；
+- 生产代码同样按 GOOS 拆分（如 `directory_error_windows.go|directory_error_unix.go`）。
+
+## 门禁组成
+
+- `make check` = fmt-check + test + test-scripts + vet + build。
+- `make test-scripts`（`scripts/test/check-scripts.sh`）：shell 变量边界规则 + 逐 shebang 语法检查
+  （sh/bash/dash/zsh -n，缺 checker 则跳过）+ shellcheck（若装）+ install.sh 契约测试；
+  `--macos` 模式额外跑 Darwin 安装测试。
+- CI 超时收紧以降低外部依赖偶发失败；`windows-installer.yml` 是 installer 变更的专用门禁
+  （含旧版迁移 E2E，见 update-delivery/windows-legacy-migration）。
+
+## 治理原则
+
+**断言跟着权威实现走**：如 `logging_policy_test.go` 断言 docker/OpenRC/systemd 日志模板跟随
+`internal/installer/units.go` 权威实现——改权威实现时同步更新断言，而不是复制值。
+脚本本身的治理规则见 engineering/script-governance。

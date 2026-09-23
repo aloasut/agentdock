@@ -1,0 +1,53 @@
+---
+description: "任务状态 owner：每任务单 JSON（schema_version=1 严格拒绝迁移）、状态机 active/blocked/completed × phase check/execute/verify/closeout、至多一个 step in_progress、完成必须 final_review pass、中断恢复=重读状态文件从最后 checkpoint 继续、单文件单锁持久化 / task state, checkpoint, recoverable task, task lifecycle"
+kind: architecture
+code:
+  paths:
+    - internal/taskstate/model.go
+    - internal/taskstate/store.go
+    - internal/taskstate/store_transition.go
+    - internal/taskstate/evolution.go
+    - internal/tool/task/service.go
+---
+
+# 任务状态（持久化、状态机、恢复）
+
+## 持久化模型
+
+每任务一个 JSON 文件 `<root>/tsk_<id>.json`（0600，root 0700），`atomicfile` 原子写。
+`schema_version=1` 不匹配即 **拒绝解码（无自动迁移）**。文件上限 8MiB，Events 环形截断保留
+最近 256 条。所有读写经 `acquireStoreLock` = 进程内 mutex + `filelock`（10s 超时）——
+**单文件单锁的全局粒度**（与 skill 的 per-skill 锁形成有意对比，见 skills/skill-content-model）。
+
+## 状态机
+
+- Task Status：`active → blocked → active（resume）→ completed`。
+- Phase：`check → execute → verify → closeout`（由当前 in-progress step 的 phase 推进）。
+- Step 转移受 `validStepTransition` 约束：`pending → in_progress|completed`、
+  `in_progress → completed`；**同一时刻至多一个 step in_progress**。
+- batch checkpoint 先全量校验再统一写入（避免半更新）。
+
+## 完成门槛
+
+- `complete` 要求 final_review 已 pass 且 Phase==closeout。
+- final_review pass 要求 ≥1 条 verified_facts **且** 所有 step completed；
+  failed 要求 ≥1 条 open_risk/missing_check。
+- failed review 会被下一次 checkpoint 清除（可重审）。
+
+## 中断恢复语义（为可恢复性设计）
+
+恢复 = 重新 `task_manage action=get` 读取当前 step 状态与最近 checkpoint（`Summary` 字段 +
+Events），从最后一个 in_progress/completed step 继续。**checkpoint 是唯一"实时进度"通道**；
+没有进程级 resume——恢复语义完全在状态文件里。Block/Resume 用 summary 记录阻塞原因。
+
+## 容量边界 philosophy
+
+全部显式常量在 `model.go`（title 512B / goal 16KB / steps ≤12 / summary 8KB 等）；
+改常量不改语义，测试即文档——本文不抄数值。
+
+## Evolution 挂点
+
+Task 上的 `guidance_context`（执行前注入，≤5 条）、`evolution_bindings`（仅任务未开始执行才可绑）、
+`evolution_candidates`（final_review 后生成，必须带匹配 `review_revision`）；
+`Template/TemplateSelection` 是 workflow_template 类演化记录实例化为步骤的通道
+（`source_templates` 记录来源，防自证）。策略规则见 task-evolution/evolution-policy。

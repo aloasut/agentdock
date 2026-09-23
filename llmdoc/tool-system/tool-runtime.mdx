@@ -1,0 +1,65 @@
+---
+description: "工具运行时 owner：工具在 specs_registry 单点注册、schema 契约所有权（agentdock-protocol mcpcontract canonical + 能力包 contract.go）、输入 strict/输出 open 的根 schema 决策、Runtime.Call 唯一校验入口、ToolError{Code,Category,Retryable} 错误契约、无运行时 ACL 的权限模型 / tool registry, ToolSpec, input schema, validation, tool error, permission model"
+kind: architecture
+code:
+  paths:
+    - internal/app/specs.go
+    - internal/app/specs_registry.go
+    - internal/app/specs_contract.go
+    - internal/tool/contract/schema.go
+    - internal/tool/contract/validator.go
+    - internal/tool/core/core.go
+    - internal/tool/command/command.go
+    - internal/mcp/registry.go
+---
+
+# 工具运行时（注册、契约、校验、错误）
+
+## 所有权边界
+
+- `internal/app` 是 Runtime 聚合根：装配全部能力 Service、持工具注册表、唯一校验入口、唯一 Close 编排。
+- `internal/mcp` 只管 MCP 协议/会话/传输语义；参数校验与权限错误 **全部归 Runtime**
+  （`internal/mcp/registry.go` 用类型别名对接 `app.ToolDefinition`，mcp 不得做校验）。
+- schema 所有权分两级：canonical 工具的 InputSchema/OutputSchema/Annotations 由外部模块
+  `github.com/uvwt/agentdock-protocol/mcpcontract` 拥有；其余工具由能力包
+  `internal/tool/<cap>/contract.go` 提供。若 `mcpcontract.AnnotationContract(name)` 命中，
+  覆盖本地 annotation fallback。
+
+## 注册模型
+
+- 单一注册点 `internal/app/specs_registry.go:buildToolSpecs()`，按能力分组追加声明式 ToolSpec 表；
+  新增工具不再修改中央 schema switch。
+- `ToolSpec` 绑定 Name/Contract provider/Annotations/Availability(cfg)/Handler；包初始化时防御性 panic：
+  空名、缺 contract、缺 handler、重名。
+- 启动时 `compileAvailableToolContracts`：每个可用工具必须有非空 input+output schema 且可编译为
+  validator，失败 **拒绝启动**（fail-fast）。canonical schema 漂移由 `mcp_contract_test.go` +
+  `contract_drift_test.go` 双向测试锁定。
+
+## 根 schema 决策
+
+输入根对象 `additionalProperties=false`（strict），输出根对象 `additionalProperties=true`（open）：
+输出允许能力包在不破坏旧客户端的前提下追加新领域字段；输入必须拒绝未声明字段。
+新增/修改 schema 前先读 `internal/tool/contract/schema.go` 头注释。
+
+## 校验与调用链
+
+`Runtime.Call` 是唯一入口：`validateToolArguments`（validator 编译自同一份 InputSchema；
+错误 `UNKNOWN_TOOL`/`INVALID_ARGUMENT`，category=validation）→ 无损解码 → `typedToolHandler[T]`
+泛型把 map 解码为强类型 request → 能力 Service 执行。
+
+## 权限模型（非显性，改权限相关代码必读）
+
+- 内建工具 **没有运行时 ACL**。路径安全由 workspace 解析承担（见 security/path-boundary）；
+  命令执行显式声明 `no_command_content_filtering`——权限边界 = 所选运行环境/OS 用户，
+  文档建议用容器/service user 做真实边界。
+- `PERMISSION_REQUIRED` 是协议预留槽（envelope 会生成 permission_request payload），
+  当前源码无生产者；真正的"权限询问"只存在于 ACP 通道（见 acp/acp-runtime）。
+
+## 错误与结果契约
+
+- 统一错误类型 `tool/core.ToolError{Code,Category,Retryable}` → MCP `isError:true` envelope。
+  `Retryable=true`（如 ACP_BUSY、ACP_CONNECTION_CLOSED）客户端可重试；validation 类一律 false。
+- **超时不是错误**：命令超时返回 `status:"timeout"` + `command_error`。
+- 输出上限体系：命令输出 4MiB 截断（BoundedOutput 记录 total+truncated，不报错）、MCP body 1MiB；
+  截断信息显式进入结果，永不因大输出崩协议。
+- secret redaction 内建 GitHub PAT/token 模式，各能力包可追加 pattern；日志/stderr 不得泄凭据。

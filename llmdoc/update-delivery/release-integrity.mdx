@@ -1,0 +1,55 @@
+---
+description: "发布完整性操作指南：release tag 必须等于 buildinfo.Version、verify-dist 发布产物资产齐全目录、sha256 校验和格式、Windows Authenticode 与 cloudflared 签名、install.sh 基址改写为固定 tag URL、Docker 四变体、core-skills bundle CRLF 归一 / release, verify-dist, signing, checksum, docker variants"
+kind: guide
+relations:
+  related:
+    - update-delivery/install-engine.mdx
+code:
+  paths:
+    - tools/release/main.go
+    - tools/release/catalog.go
+    - .github/workflows/release.yml
+    - packaging/windows/sign-windows.ps1
+    - packaging/build-core-skill-bundle.py
+---
+
+# 发布完整性（release pipeline）
+
+## 版本单一事实源
+
+release tag 必须等于 `internal/buildinfo.Version`（`tools/release verify-version` + Python 复核
+buildinfo）。改版本只改 buildinfo 一处。
+
+## 资产完整性
+
+`tools/release verify-dist`（catalog.go）强制 required 资产齐全：linux/darwin/windows 二进制包
+amd64+arm64、`AgentDock-macos-universal.dmg`、`AgentDockSetup-{amd64,arm64}.exe`、
+`install.sh`/`install.ps1`，及全部 `.sha256`。校验和格式：`<sha256>  <name>`。
+
+## 签名
+
+- Windows：Authenticode 强制（`packaging/windows/sign-windows.ps1`）；离线 Setup 内嵌的 cloudflared
+  先验证其 Authenticode 签名再分发。
+- macOS：DMG/ZIP 校验通过后才上传发布。
+- macOS 打包测试强制新 Release 的 App Bundle 内嵌 `Contents/Helpers/agentdock-arbiter`
+  （自更新依赖，见 update-engine）。
+
+## publish 期改写
+
+发布时把 `install.sh` 默认 latest 下载基址 **改写为本次 tag 的固定 URL**——bootstrap 可复现，
+不被后续 release 影响。Windows job 下载并校验"确切字节的 installer"、standard user 冒烟、
+签名并 verify、打包含 shims/arbiter/wsl-helper/manage-windows.ps1/share 的 ZIP。
+
+## Docker 变体
+
+| target | 用途 |
+|---|---|
+| 默认 runtime-base | 单二进制 + core-skills bundle，非 root uid 10001，tini，healthcheck |
+| `dev` | + Go 工具链/build-essential |
+| `browser` | + chromium/字体/no-sandbox，`AGENTDOCK_BROWSER_ENABLED=true` |
+| `browser-test` | xvfb 跑 browser_integration 测试 |
+
+## core-skills bundle
+
+`packaging/build-core-skill-bundle.py` 构建（Docker 与 Release 共用），归一化 CRLF→LF
+保证跨平台 content_digest 一致（skill 内容身份依赖，见 skills/skill-content-model）。

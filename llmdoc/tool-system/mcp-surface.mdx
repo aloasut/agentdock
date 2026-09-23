@@ -1,0 +1,53 @@
+---
+description: "MCP 协议面速查：toolEnvelope 成功/错误结构、Retryable 重试约定、view_image 图片提升、mcp_tool_call 透传、_meta 注入点、MCP Apps UI 资源门控、动态 MCP 三工具与 qualified name 规则 / tool envelope, mcp apps, dynamic mcp, mcp_tool_call, qualified name"
+kind: reference
+code:
+  paths:
+    - internal/mcp/server.go
+    - internal/mcp/apps.go
+    - internal/mcp/client/manager.go
+    - internal/mcp/client/types.go
+    - internal/tool/mcp/service.go
+---
+
+# MCP 协议面（envelope、Apps、动态 MCP）
+
+权威实现：`internal/mcp/server.go:toolEnvelope`。本文只记查表用的稳定约定。
+
+## envelope 结构
+
+- 失败：`isError:true` + structuredContent `{tool, error, code, category, retryable, details[,
+  permission_request]}`。`retryable:true`（ACP_BUSY、ACP_CONNECTION_CLOSED、MCP_REGISTRY_READ_FAILED 等）
+  客户端可重试；validation 类错误一律不可重试。
+- 成功：`isError:false` + structuredContent + pretty JSON 文本 content。
+- `PERMISSION_REQUIRED` 错误码有专门分支：生成 `permission_request` payload（当前无生产者，协议预留）。
+
+## 特殊分支
+
+- `view_image`：把结果里的 `_mcp_image_base64`/`_mcp_image_mime_type` 提升为 MCP image content，
+  并从 structuredContent 剥离。
+- `mcp_tool_call`：透传远端 isError/content（`dynamicMCPToolEnvelope`），不二次包装语义。
+- `_meta` 在 descriptor 与 result 两处注入（file_arg_rewrite_paths、openai/fileParams、ui resourceUri）；
+  action-scoped Apps UI 只在 result action 匹配时出现。
+
+## 传输旋钮（Streamable HTTP）
+
+Stateless:true、JSONResponse:true、1MiB body cap；`DisableLocalhostProtection` 仅当配置公网 URL
+且启用认证；`PropagateRequestCancellation:true`（取消只及本次调用，见 execution-model）。
+
+## MCP Apps UI
+
+资源 URI 与 HTML 契约来自 `agentdock-protocol`；`internal/mcp/apps.go` 只做注册与裁剪，
+门控 = `MCPAppsEnabled`（默认开）/Nexus/ACP。
+
+## 动态 MCP（外部服务器工具）
+
+- **不进主工具表**：统一走 `mcp_tool_search → mcp_tool_inspect → mcp_tool_call` 三工具，
+  控制主工具表体积并隔离第三方。
+- qualified name = `<server>:<tool>`；转发前先按发现阶段 schema 校验参数。
+- 注册表持久化为 JSON（`internal/mcp/client/store.go`），连接超时上限 300s。
+
+## 匿名可达端点
+
+状态页 `/`、`/healthz`、`/.well-known/*`、`/register`、`/oauth/*`、`/artifacts/public/`。
+受保护端点的认证判定模式见 security/authentication。

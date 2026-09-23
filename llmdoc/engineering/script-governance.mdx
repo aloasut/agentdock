@@ -1,0 +1,41 @@
+---
+description: "脚本治理速查：inventory.yaml 唯一治理清单、双向登记强制（未登记/登记不存在都 fail）、公开契约不得改名、legacy 脚本禁止新增能力、>300 行需 oversize_justification、CI 工作流自身也被测试约束 / script governance, inventory, check-scripts, public contract"
+kind: reference
+code:
+  paths:
+    - scripts/governance/inventory.yaml
+    - scripts/test/script_governance_test.go
+    - docs/installer-script-inventory.md
+---
+
+# 脚本治理（inventory 双向登记）
+
+## 唯一治理清单
+
+`scripts/governance/inventory.yaml` 管辖所有 tracked 脚本（`scripts/`、`packaging/`、
+`docker-entrypoint.sh` 下的 `*.sh/*.ps1/*.py/*.iss`）。每个脚本必须登记：
+
+- `class ∈ {bootstrap, runtime-adapter, packaging, test, dev, legacy, ci}`；
+- `owner`（Go 包/团队归属）；
+- `public_contract`（是否公开入口）；
+- `deletable`。
+
+## 硬规则
+
+- 公开入口（`public_contract: true`，如 install.sh/install.ps1/AgentDock.iss）**不得改名删除**
+  ——它们是用户与 Release 的契约面。
+- `legacy` 脚本 **禁止新增产品能力**（如 `packaging/windows/compat/manage-windows.ps1` 是
+  v0.8.3 原始字节兼容资产，迁移完成后会从安装中移除）。
+- 超过 300 行（`review_threshold_lines`）的新脚本必须写 `oversize_justification`
+  （或标 `legacy_oversize`）。
+
+## 强制执行
+
+`scripts/test/script_governance_test.go` 双向校验：tracked 但未登记 → fail；
+登记但文件不存在 → fail；超行无 justification → fail。
+`scripts/test/ci_workflow_test.go` 让 **CI 工作流本身**也被测试约束（改 workflow 也会被门禁拦）。
+
+## 更深的脚本职责盘点
+
+`docs/installer-script-inventory.md`：Release 公开面清单、Go Installer Engine 单一权威、
+为什么 Windows 保留 PowerShell、不允许回归项——改安装脚本前先读它。

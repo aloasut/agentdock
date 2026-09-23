@@ -1,0 +1,41 @@
+---
+description: "公共工件安全模型速查：HMAC capability URL 替代认证、纵深防御链（id 白名单→OpenRoot→元数据匹配→HMAC→SHA-256 复核）、主动内容强制 attachment、404/410 语义、保留期 24h 默认 7 天上限 / public artifacts, signed url, capability url, publish, retention"
+kind: reference
+code:
+  paths:
+    - internal/publicartifacts/http.go
+    - internal/publicartifacts/signing.go
+    - internal/publicartifacts/cleanup.go
+    - internal/publicartifacts/files.go
+---
+
+# 公开工件（匿名发布面）
+
+## 定位与认证替代物
+
+把本机文件/字节发布为 **公网可取** 的工件（图片/截图/目录 tar.gz），供聊天客户端下载；
+也供 Nexus Bridge 出站读（`ReadChunk` 首块前整包 SHA-256 校验）。
+
+认证替代物是 **capability URL**：`/artifacts/public/<id>/<filename>?expires=<unix>&sig=<hex>`，
+sig = HMAC-SHA256(secret, id\0filename\0expires\0sha256)。secret 为 32 字节随机值，
+持久于 `<home>/secrets/public-url-secret`（并发安全初始化：临时文件 + `os.Link` 不覆盖语义发布）。
+
+## 纵深防御链（顺序即实现，`cleanup.go resolveArtifact` + `http.go`）
+
+1. artifact id 白名单（32 位小写 hex + `filepath.IsLocal`）；
+2. `os.OpenRoot` 防 symlink 逃逸出 Root；
+3. 元数据 id/filename/expires 全匹配；
+4. HMAC 校验；
+5. 大小与 SHA-256 复核；
+6. 响应头 `CSP: sandbox` + `nosniff` + `no-store`。
+
+## 主动内容策略
+
+HTML/SVG/XML 等一律 `attachment` 强制下载，仅安全图片/纯文本可 inline——
+"不能在 AgentDock 同源下解释执行"。
+
+## 状态与保留期
+
+- 越权/遍历 → **404 而非 403**（不泄露存在性）；过期 → **410 Gone**。
+- 保留期默认 24h，上限 7 天（`retention()` 静默截断超限值）；
+  损坏/缺 payload 的工件目录 24h 后由 Cleanup 回收（发布时也会先跑一次 Cleanup）。

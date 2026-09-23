@@ -1,0 +1,54 @@
+---
+description: "Skill 当前内容模型 owner：无版本/无 activate/无 rollback 的收敛决策（PR #127）、content_digest 是内容指纹不是版本号、同名更新=原子替换当前目录、legacy skill-store 一次性迁移与 7 天归档、per-skill read/write lease、bundled bootstrap 逆序回滚 / skill store, content digest, skill migration, skill lock, current content model"
+kind: architecture
+code:
+  paths:
+    - internal/skill/install.go
+    - internal/skill/state/store.go
+    - internal/skill/digest.go
+    - internal/skill/migrate.go
+    - internal/skill/bundle/bootstrap.go
+---
+
+# Skill 当前内容模型（存储与事务）
+
+## 收敛决策（必须理解的背景）
+
+旧模型（多版本 `skill-store/installed/<skill>/<version>/` + active_version + Activate/rollback）
+被判定为 **负资产** 并已移除（PR #127）。现行为 **当前内容模型（current-content model）**：
+
+- 每个 managed skill 只有一份当前目录 `~/.agentdock/skills/<name>/`；**没有版本、没有
+  activate/rollback、没有 revision store**。
+- 身份 = 目录名 == SKILL.md `name`；`content_digest`（规范化 sha256）是 **内容指纹**，
+  不是产品版本号——不得据此产生版本选择 UI/API。
+- 同名更新 = 审查新内容后 **原子替换当前目录**（backup-rename-commit，commit 失败
+  `restoreReplacedSkill` 恢复旧内容）；相同 digest 安装为 no-op。
+  临时备份只为单次事务服务，**不是历史版本库**。
+- frontmatter 收敛与包格式契约见 skills/skill-contract。
+
+## 安装事务（internal/skill/install.go）
+
+prepareSource（https 下载限额 128MiB / 本地目录 / zip 解压且双重防逃逸）→ 可选 digest 校验 →
+`ValidatePackage`（拒绝 symlink、特殊文件、`.env`、`.agentdock-install.json`、legacy
+`agentdock.yaml`）→ 计算 content_digest → 暂存目录 copy → 组件级 write lock →
+digest 相同 no-op → 否则 backup-rename-commit。
+
+## 并发模型（per-skill 锁，非全局粗锁）
+
+单 skill 粒度 read lease（reader 文件）/ write lease（`writer.lock` 目录 + owner 文件 +
+1min 心跳 + 30min 过期强收）；reader 25h 过期清理。锁位于 `<home>/locks/skills/`。
+对比：taskstate 是单文件单锁全局粒度（见 task-evolution/task-state）。
+
+## legacy 迁移（一次性、可重入）
+
+`skill.MigrateLegacyLayout`：把 legacy skill-store 的 active 版本内容重装进新 store、
+skill-data 迁到 `data/skills/`，然后把 legacy 根归档到
+`~/.agentdock/migrations/skill-model-legacy-<ts>`（7 天保留期后清理）。迁移语义：启动即可重入、
+成功后 legacy 根不再被运行时读取。调用点：tool skill 服务（运行时启动）、CLI（command_skill）、
+installer engine。
+
+## 内置 bundle 引导
+
+release 携带 `manifest.json`（name/path/digest，DisallowUnknownFields、≤1MiB）+ packages zip；
+启动/安装时经 manager 校验后逐个 Install；**事务中途失败按已安装项逆序回滚**（恢复备份或
+Remove 新装项）。bundle 构建与 CRLF 归一见 update-delivery/release-integrity。

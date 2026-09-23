@@ -1,0 +1,54 @@
+---
+description: "事务安装引擎 owner：installer 五动作契约（install/repair/uninstall/commit/abandon）、rollback_failed 与 external_rollback_failed 的严格区分与恢复入口、journal 固定回滚次序、脚本只做 UAC/DPAPI/session 适配的边界 / install transaction, rollback journal, uninstall, installer engine"
+kind: architecture
+relations:
+  related:
+    - update-delivery/update-engine.mdx
+code:
+  paths:
+    - internal/installer/engine.go
+    - internal/installer/contract.go
+    - internal/installer/journal.go
+    - scripts/install/install.sh
+    - scripts/install/install.ps1
+---
+
+# 事务安装引擎（internal/installer）
+
+`internal/installer/contract.go` 的注释即语义文档；本文记决策与恢复语义。
+
+## 动作契约
+
+`install / repair / uninstall / commit / abandon`：
+
+- `commit` 只在 OS adapter 确认外部状态（服务/任务/注册表）落地后调用；
+- `abandon` 只改权威事务状态，**不代替外部回滚**。
+
+## 失败码区分（最重要）
+
+| 码 | 含义 | 恢复路径 |
+|---|---|---|
+| `rollback_failed` | Engine journal Restore 失败 | 下次 install 可重试 Restore |
+| `external_rollback_failed` | Task/Registry/PowerShell 等外部状态没修好 | **禁止**凭 Restore 成功放行下次 install；修复外部状态后，不带 `--rollback-failed` 再 abandon 一次才是恢复入口 |
+
+## Phase 与 journal 不变量
+
+- Phase：prepare→verify→stage→activate→start→health→skills→tunnel→commit/rollback；
+  engine 全程持 install 进程锁，先 `recoverInterrupted`。
+- 回滚次序固定：停新进程 → 还原文件 → 重载 unit → 按安装前状态拉起旧服务。
+- journal 同时记录文件快照与服务运行态（was_active/was_enabled/stopped_by_us…）；
+  **只有 Restore 成功才写 rolled_back**，否则 failed/rollback_failed。
+- `OptionalString` 区分"未指定（保留已有凭据）"与"空值"——凭据覆盖语义依赖这个区分。
+
+## 脚本边界
+
+脚本只做 UAC/DPAPI/session 适配（治理清单 scripts/governance/inventory.yaml 约束公开入口，
+见 engineering/script-governance）：
+
+- `install.sh`：Unix 公开 bootstrap——平台/架构识别、Release 下载校验，随后交给 `agentdock install`
+  （Go Engine 是唯一权威）；支持卸载转发。
+- `install.ps1`：Windows 公开 bootstrap / Inno Setup 契约（`-InstallChannel script|setup`）；
+  `Invoke-SetupRuntimeProcess` 借 shim 的 `--setup-runtime-host` 穿透 Inno 6.7+ RedirectionGuard
+  进程树（见 desktop/desktop-runtime 的 shim 模式）。
+
+发布完整性（校验和/签名/基址改写）见 update-delivery/release-integrity。

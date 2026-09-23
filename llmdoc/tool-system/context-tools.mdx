@@ -1,0 +1,45 @@
+---
+description: "模型上下文工具速查：agentdock_context 能力索引的 best-effort warnings 语义、workspace_context 工作区索引、AGENTS.md 只读发现边界（继承规则/64KiB/128KiB 限额/TOCTOU 防护）、common skill 索引来源 / agentdock_context, workspace_context, agents.md, capability index"
+kind: reference
+code:
+  paths:
+    - internal/app/agentdock_context.go
+    - internal/app/workspace_context.go
+    - internal/app/common_skills.go
+    - internal/agentinstructions/instructions.go
+    - internal/agentinstructions/open_unix.go
+---
+
+# 模型上下文工具（agentdock_context / workspace_context / AGENTS.md）
+
+## agentdock_context（能力自描述）
+
+模型引导入口，返回当前 runtime 可用能力的结构化索引。
+
+- **失败索引 best-effort**：子索引失败进 warnings，不整体失败；warning 文案本身包含替代操作
+  （引导模型降级）。
+- recall 索引超时被 clamp 到 (1s, 5s) 区间。
+
+## workspace_context（工作区索引）
+
+返回 workspace 作用域的上下文：工作区 skill 索引（name/description/file，**不含正文**——
+正文经 `skill://` URI 读取，见 skills/skill-contract）与 AGENTS.md 指引。
+`internal/agentinstructions` 是其唯一指令来源。
+
+## AGENTS.md 只读发现（有界契约）
+
+`internal/agentinstructions` 包注释即契约：只读、有界、无可变工作区状态、从不执行指令内容。
+
+- 范围：全局仅 `~/.agentdock/AGENTS.md`；workspace 继承从 workspace root（最近的 `.git` 边界，
+  或 AgentDock 默认工作目录边界；二者皆无则仅 workdir 本身）向 workdir 逐级继承，最多 64 层。
+- 限额：单文件 ≤64KiB、总量 ≤128KiB；超限 **skip 并给 reason**（file_size_limit /
+  total_size_limit / not_regular_file / invalid_utf8_text / file_changed_during_read …），不报错。
+- TOCTOU 防护：`os.OpenRoot` + `O_NOFOLLOW|O_NONBLOCK` + 前后 `os.SameFile` 对比，防符号链接/FIFO
+  替换；同文件（SameFile）判 duplicate 去重。
+- 无缓存：每次调用重新读盘（工作区文件随时可变）。
+- 权威设计文档：`docs/agents-context.md`（本主题不重复其内容）。
+
+## common skill 索引
+
+`agentdock_context` 的能力层 common skill 索引扫描 `~/.agents/skills`（即 shared 来源，
+只读；受管 skill 索引走 skill 系统自身，见 skills/skill-content-model）。
