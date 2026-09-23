@@ -21,6 +21,10 @@ const (
 	PathModel       = "host"
 	RecallTimeoutMS = 30000
 
+	// ListenHostLAN 是 AGENTDOCK_HOST 的特殊值：监听回环加本机当前全部私网网段地址。
+	// 地址只在启动时解析一次；网络环境变化后需要重启服务（与配置一次性加载模型一致）。
+	ListenHostLAN = "lan"
+
 	defaultOAuthAccessTokenTTLSeconds = int64(time.Hour / time.Second)
 	maxOAuthAccessTokenTTLSeconds     = int64(999999 * 24 * 60 * 60)
 )
@@ -228,6 +232,9 @@ func (c *Config) Normalize() error {
 	c.Host = strings.TrimSpace(c.Host)
 	if c.Host == "" {
 		c.Host = "127.0.0.1"
+	}
+	if strings.EqualFold(c.Host, ListenHostLAN) {
+		c.Host = ListenHostLAN
 	}
 	c.OAuthServerURL = strings.TrimSpace(c.OAuthServerURL)
 	if c.OAuthAccessTokenNeverExpires {

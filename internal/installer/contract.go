@@ -430,6 +430,11 @@ func currentPlatform() string {
 
 func healthURL(host string, port int) string {
 	host = strings.TrimSpace(host)
+	// AGENTDOCK_HOST=lan 是 Core 的多网段监听语义；本机访问地址（健康探测、
+	// 展示用 MCP URL）始终按回环构造，"lan" 不能出现在 URL 里。
+	if strings.EqualFold(host, "lan") {
+		host = "127.0.0.1"
+	}
 	switch host {
 	case "", "0.0.0.0", "::", "[::]":
 		host = "127.0.0.1"

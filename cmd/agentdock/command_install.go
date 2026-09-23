@@ -61,7 +61,7 @@ func runInstallCommand(ctx context.Context, args []string, stdout, stderr io.Wri
 	flags.StringVar(&request.Channel, "channel", "official", "安装通道")
 	// host/port 默认必须是“未指定”，不能写成 127.0.0.1:8765。
 	// 否则 update/repair 省略这两个标志时会把用户已有监听地址覆盖掉。
-	flags.StringVar(&request.Host, "host", "", "监听地址；省略则保留已有值")
+	flags.StringVar(&request.Host, "host", "", "监听地址；lan 表示监听回环加本机全部私网网段；省略则保留已有值")
 	flags.IntVar(&request.Port, "port", 0, "监听端口；省略则保留已有值")
 	flags.StringVar(&request.LogLevel, "log-level", "", "日志级别；省略则保留已有值")
 	flags.StringVar(&request.TunnelMode, "tunnel-mode", "", "Tunnel 模式：none、quick 或 named；省略则保留已有值")

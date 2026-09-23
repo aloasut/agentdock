@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -589,20 +590,66 @@ func TestAuthorizedOAuthFalseWhenOAuthDisabled(t *testing.T) {
 
 func TestServeHTTPStopsCleanlyWhenContextIsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	server := newHTTPServer("127.0.0.1:0", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	server := newHTTPServer(listener.Addr().String(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	done := make(chan error, 1)
-	go func() { done <- serveHTTP(ctx, server) }()
+	go func() { done <- serveHTTPListeners(ctx, []*http.Server{server}, []net.Listener{listener}) }()
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("serveHTTP() error = %v", err)
+			t.Fatalf("serveHTTPListeners() error = %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("serveHTTP did not stop after context cancellation")
+		t.Fatal("serveHTTPListeners did not stop after context cancellation")
+	}
+}
+
+func TestServeHTTPListenersServesEveryBoundAddress(t *testing.T) {
+	addresses := []string{"127.0.0.1:0", "127.0.0.1:0"}
+	servers := make([]*http.Server, 0, len(addresses))
+	listeners := make([]net.Listener, 0, len(addresses))
+	for _, addr := range addresses {
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Fatalf("listen %s: %v", addr, err)
+		}
+		defer listener.Close()
+		listeners = append(listeners, listener)
+		servers = append(servers, newHTTPServer(listener.Addr().String(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- serveHTTPListeners(ctx, servers, listeners) }()
+	time.Sleep(20 * time.Millisecond)
+	for _, listener := range listeners {
+		resp, err := http.Get("http://" + listener.Addr().String() + "/")
+		if err != nil {
+			t.Fatalf("request %s: %v", listener.Addr(), err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveHTTPListeners() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("serveHTTPListeners did not stop after context cancellation")
 	}
 }
 

@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/uvwt/agentdock/internal/auth"
@@ -55,17 +58,44 @@ func Serve(ctx context.Context, server *mcp.Server, runtime runtimeapi.Runtime, 
 	registerRuntimeAPI(mux, runtime, cfg, oauthStore)
 	mux.HandleFunc("/mcp", mcpEndpointHandler(server, cfg, oauthStore))
 
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	httpServer := newHTTPServer(addr, loggingMiddleware(mux))
-	slog.Info("http server listening", "addr", addr)
-	return serveHTTP(ctx, httpServer)
+	listenHosts := cfg.ListenHosts()
+	if cfg.Host == config.ListenHostLAN && len(listenHosts) == 1 {
+		// lan 模式发现不到私网地址（无网络/仅虚拟回环）时保持可用，但必须让运维看得到降级。
+		slog.Warn("lan listen mode found no private network addresses; serving loopback only")
+	}
+	listeners := make([]net.Listener, 0, len(listenHosts))
+	servers := make([]*http.Server, 0, len(listenHosts))
+	defer func() {
+		for _, listener := range listeners {
+			_ = listener.Close()
+		}
+	}()
+	for _, host := range listenHosts {
+		addr := net.JoinHostPort(host, strconv.Itoa(cfg.Port))
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("listen %s: %w", addr, err)
+		}
+		listeners = append(listeners, listener)
+		httpServer := newHTTPServer(addr, loggingMiddleware(mux))
+		servers = append(servers, httpServer)
+		slog.Info("http server listening", "addr", addr)
+	}
+	return serveHTTPListeners(ctx, servers, listeners)
 }
-func serveHTTP(ctx context.Context, server *http.Server) error {
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- server.ListenAndServe() }()
 
+// serveHTTPListeners 并行服务全部监听地址；任一地址报错即整体退出，
+// 关闭次序与单监听一致：ctx 结束 → 限时 Shutdown → 超时降级 Close。
+func serveHTTPListeners(ctx context.Context, servers []*http.Server, listeners []net.Listener) error {
+	serveErrs := make(chan error, len(servers))
+	for i, server := range servers {
+		listener := listeners[i]
+		go func() {
+			serveErrs <- server.Serve(listener)
+		}()
+	}
 	select {
-	case err := <-serveErr:
+	case err := <-serveErrs:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
@@ -75,12 +105,29 @@ func serveHTTP(ctx context.Context, server *http.Server) error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		_ = server.Close()
-		return fmt.Errorf("shutdown HTTP server: %w", err)
+	shutdownErrs := make([]error, len(servers))
+	var wg sync.WaitGroup
+	for i, server := range servers {
+		wg.Add(1)
+		go func(i int, server *http.Server) {
+			defer wg.Done()
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				shutdownErrs[i] = server.Close()
+				return
+			}
+		}(i, server)
 	}
-	if err := <-serveErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	wg.Wait()
+	for i, err := range shutdownErrs {
+		if err != nil {
+			return fmt.Errorf("shutdown HTTP server %s: %w", servers[i].Addr, err)
+		}
+	}
+	for range servers {
+		err := <-serveErrs
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
 	}
 	return nil
 }

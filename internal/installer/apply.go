@@ -952,6 +952,16 @@ func readActivatedInstall(request Request) (activatedInstall, error) {
 	return resultFromEnv(filepath.Join(request.RuntimeRoot, "agentdock.env"), probe)
 }
 
+// manifestHost 把监听模式伪地址翻译成 runtime.json 应记录的本机地址。
+// AGENTDOCK_HOST=lan 只影响 Core 监听；manifest.Host 供控制面板与本机健康探测使用，
+// 必须保持回环，否则桌面端会拿 "lan" 当主机名去连。
+func manifestHost(host string) string {
+	if strings.EqualFold(strings.TrimSpace(host), "lan") {
+		return "127.0.0.1"
+	}
+	return host
+}
+
 func resultFromEnv(envFile string, request Request) (activatedInstall, error) {
 	host := request.Host
 	port := request.Port
