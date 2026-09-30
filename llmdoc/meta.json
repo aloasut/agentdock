@@ -1,105 +1,105 @@
 {
   "schema": "llmdoc.meta/v3",
   "baseline": {
-    "revision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce",
-    "verifiedAt": "2026-09-23T03:58:43.181Z"
+    "revision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c",
+    "verifiedAt": "2026-09-30T09:13:08.690Z"
   },
   "documents": {
     "acp/acp-runtime.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "acp/adapter-compatibility.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "desktop/desktop-runtime.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "desktop/wsl-helper.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "engineering/script-governance.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "engineering/testing-and-ci.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "execution-model.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "nexus/nexus-bridge.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "security/authentication.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "security/configuration.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "security/env-isolation.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "security/path-boundary.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "security/public-artifacts.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "skills/skill-content-model.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "skills/skill-contract.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "task-evolution/evolution-policy.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "task-evolution/task-state.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "tool-system/add-a-tool.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "tool-system/context-tools.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "tool-system/mcp-surface.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "tool-system/runtime-api.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "tool-system/tool-runtime.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "update-delivery/install-engine.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "update-delivery/release-integrity.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "update-delivery/update-engine.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "update-delivery/windows-legacy-migration.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "tool-system/dynamic-mcp.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "host-inputs.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "tool-system/client-tool-boundary.mdx": {
-      "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "update-delivery/local-macos-build.mdx": {
-      "validatedRevision": null
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "engineering/llmdoc-workflow.mdx": {
-      "validatedRevision": null
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     },
     "remote-agent-onboarding.mdx": {
-      "validatedRevision": null
+      "validatedRevision": "c82edb8a63fb345519efcaaddd7cfc287a78a09c"
     }
   },
   "convergence": {
