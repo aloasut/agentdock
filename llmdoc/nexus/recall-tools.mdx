@@ -1,0 +1,53 @@
+---
+description: "NexusDock Recall 记忆库工具速查：recall_search/recall_read/recall_write/recall_maintain/private_note_manage 五工具契约、requiresNexus 配对门控（未配对即不可用）、write 的 card/markdown 目标与显式 action、私密笔记保险库隐私语义（默认不用、搜索仅元数据、明文仅显式读取、Git 备份只有 age 密文）/ recall, memory, private notes, nexusdock recall, long term memory"
+kind: reference
+relations:
+  related:
+    - nexus/nexus-bridge.mdx
+    - task-evolution/evolution-policy.mdx
+code:
+  paths:
+    - internal/app/specs_recall.go
+    - internal/tool/recall/service.go
+    - internal/tool/recall/private_notes.go
+---
+
+# Recall 工具（NexusDock 记忆库）
+
+## 定位与门控
+
+Recall 是 AgentDock 的 **长期记忆库**：Markdown 文档 + 知识卡片 + 私密笔记，**存储在配对的
+NexusDock 节点上**（AgentDock 只是客户端；传输与凭据见 nexus-bridge）。同时它是演化系统的
+存储底座——lifecycle CAS API 在同一存储上（见 evolution-policy），**未配对 Nexus 时演化体系
+整体不可用**。
+
+门控：五个工具全部 `Availability: requiresNexus`——`cfg.NexusEndpoint != ""` 才注册
+（配对后经 `agentdock nexus pair` 写入身份文件 + 重启）。未配对时 `agentdock_context` 把
+Recall 列为不可用，是预期行为不是故障。
+
+## 工具契约（查表）
+
+| 工具 | 用途 | 关键约束 |
+|---|---|---|
+| `recall_search` | 词法检索文档与卡片；有 embedding 时语义增强 | `kind=all/markdown/card`；后端路由内部决定，模型不选后端 |
+| `recall_read` | 按路径读一篇文档/卡片 | — |
+| `recall_write` | 写入与编辑 | **target=card/markdown 与 action 必须显式选择**；action 集：plan/create/replace/append/patch/更新 facts/diff/delete |
+| `recall_maintain` | 运维动作 | list、lint、embedding_status、reindex、reindex_cards |
+| `private_note_manage` | 私密笔记保险库 | 见下节；action：search/read/write/delete/status/maintain |
+
+## 私密笔记保险库（隐私边界，逐条硬规则）
+
+- **默认不用**：只在用户明确要求访问，或内容明显含敏感凭据/机密时使用。
+- **搜索只返回元数据**（名称、简介、标签、分类、路径）；明文只在显式 read 时返回。
+- **Git 备份里只有 age 密文**——备份泄漏不等于明文泄漏。
+- delete/overwrite 带 `confirmed`/`overwrite` 可选字段，AgentDock 原样透传给 NexusDock
+  服务端执行；AgentDock 侧不做隐式覆盖判断。
+
+## 相关事实
+
+- recall 走 nexusclient 的共享 HTTP 传输策略（token 不跨重定向、有界响应）；
+  领域路径/超时/错误语义归本能力包所有（nexus-bridge 的边界声明）。
+- `agentdock_context` 的 recall 索引超时 clamp 在 (1s, 5s)，失败进 warnings 不整体失败
+  （tool-system/context-tools）。未配对 Nexus、或请求声明 local-only 时，context 的
+  Nexus 段（Recall/WorkflowTemplates）**整体不出现**；local-only 保证不发起 Nexus 请求、
+  不回显共享数据（`agentdock_context` 的 local-only 测试契约）。

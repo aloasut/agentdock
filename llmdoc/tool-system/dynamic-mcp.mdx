@@ -52,7 +52,7 @@ list | inspect | refresh | env_set | env_unset | env_list`。
 | `url` | 仅 streamable_http；http/https 绝对地址，禁止 user info/fragment |
 | `timeout_ms` | 缺省 30000，上限 300000 |
 | `header_env`（HTTP）/ `env_from_env`（stdio） | 密钥引用，见下节；header 不得覆盖保留头（accept/host/mcp-protocol-version 等） |
-| `enabled` | 默认关闭的调用方需显式开启 |
+| `enabled` | 可选；**add 缺省即启用**（服务端缺省 true），无需额外开启步骤，`disable` 才停用 |
 
 两类传输的字段严格互斥：stdio 配置里出现 `url`/`header_env`、HTTP 配置里出现
 `command`/`env_from_env` 都会被拒绝。

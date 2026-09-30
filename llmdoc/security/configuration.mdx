@@ -1,5 +1,5 @@
 ---
-description: "配置模型速查：纯环境变量无配置文件、FromEnv→flags→Normalize→ValidateAuth 启动一次性完成、无热生效改配置必须重启、Normalize 的加固语义（0700+EnsurePrivate、拒绝相对路径）、Nexus 凭据单一来源 / configuration, env vars, startup validation, normalize, restart to apply"
+description: "配置模型速查：纯环境变量配置（AGENTDOCK_*，无配置文件）、FromEnv→flags→Normalize→ValidateAuth 启动一次性完成、改任何环境变量都必须重启生效（无热生效）、Normalize 的加固语义（0700+EnsurePrivate、拒绝相对路径）、Nexus 凭据单一来源 / configuration, env vars, startup validation, normalize, restart to apply, 改配置要重启吗"
 kind: reference
 code:
   paths:
@@ -16,7 +16,7 @@ code:
 - **纯环境变量配置，没有配置文件**。唯一入口 `config.FromEnv()` 读 `AGENTDOCK_*`；
   少量 CLI flag（host/port/log-level/browser/stdio）可覆盖。
 - 加载顺序固定且一次性：`FromEnv → flags → Normalize → ValidateAuth`。
-  **没有任何热生效——改配置 = 重启服务**（`agentdock service restart`）。
+  **没有任何热生效——改任何 `AGENTDOCK_*` 环境变量都要重启服务**（`agentdock service restart`）。
 - 具体变量名与默认值是 live facts，权威源是 `internal/config/config.go`，本文不抄写数值。
 
 ## Normalize 不只是填默认值

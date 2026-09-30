@@ -51,6 +51,20 @@ transcript 归属 adapter（`history_owner=adapter`）：AgentDock 不持久化�
 只在 load 调用内暂存（≤4096 事件/8MiB），并过滤 `agent_thought_chunk`（隐私边界）。
 `CurrentPolicies()` 把执行常量导出为机器可读 policy——客户端引导与服务端行为同源，防文档漂移。
 
+## Profile 配置面（adapter 从哪来）
+
+- Profile 声明：`AGENTDOCK_ACP_PROFILES_JSON`（数组），字段 `id/display_name/kind/command/
+  args/env_from_env/enabled`；`AGENTDOCK_ACP_DEFAULT_PROFILE` 指定默认 profile。
+- **kind 枚举：`codex / claude / grok / custom`**；custom profile 的 id 不得占用
+  codex/claude/grok 预设名（Normalize 校验，非法拒绝启动）。
+- 配额边界：`AGENTDOCK_ACP_MAX_CONCURRENT_PROMPTS` ∈ [1,8]；
+  `AGENTDOCK_ACP_INTERACTION_TIMEOUT_MS` ∈ [1000, 3600000]；越界拒绝启动。
+- adapter 可执行文件解析顺序（Windows 面板 `AcpAdapterResolver` 同序）：**显式配置的
+  command 优先** → 按已安装位置探测 → npm 包适配器解析。未启用 ACP
+  （`AGENTDOCK_ACP_ENABLED` 非真）时 profiles 配置整体置空。
+- Windows 控制面板经 `config update --acp-profiles-json` 持久化（settings 存储，
+  见 desktop-runtime 的连接模式一节）。
+
 ## 失败语义
 
 - 协议违规（JSON-RPC 版本缺失/响应无 ID/解码失败）→ **立即 finish 连接**（fail-fast，防消息错位）。
