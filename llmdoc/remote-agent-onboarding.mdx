@@ -81,6 +81,7 @@ URL 构成规则：**客户端可达的 origin + `/mcp`**；凭据只放 `Author
 | 临时公网（quick tunnel） | 任意 | `https://<随机子域>.trycloudflare.com/mcp`——tunnel 重启后变化，以主界面当前值为准 |
 | 固定域名（named tunnel） | 任意 | `https://<你的域名>/mcp`（= `AGENTDOCK_SERVER_URL` + `/mcp`） |
 | stdio | 同机 | 无 URL，客户端直接把 `agentdock --stdio` 当子进程拉起 |
+| 经跨网中继接入 | 客户端本机 | `http://127.0.0.1:<本地中继端口>/mcp`（见下方"跨网中继链路"） |
 
 TOML 样板（Codex；JSON 形态同 macOS 主界面「复制 MCP」按钮输出，供通用客户端）：
 
@@ -112,8 +113,30 @@ args = ["--stdio"]
   桌面安装总是生成 token。仅本机裸跑（无 token 的 loopback）才允许匿名——样板统一带头不会错。
 - **地址会变的项**：LAN IP 跟随 DHCP（换网段需更新 url；服务重启重新枚举地址）；quick
   随机子域每次 tunnel 重启变化；named 域名稳定。
-- **stdio 的取舍**：不经网络、无认证门（能启动进程即是信任边界），只适合同机客户端；
-  跨机一律走 HTTP 样板。
+- **stdio 的取舍**：不经网络、无认证门（能启动进程即信任边界），只适合同机；跨机一律走 HTTP 样板。
+
+## 跨网中继链路（实例不可直达时）
+
+客户端与 AgentDock 不在同一可达网络（跨子网路由不通；公网映射如花生壳对海外客户端
+不稳定——实测不可用）时，经一台**双方都可达的中转机**串两级转发：
+
+```
+客户端 → 本机回环中继 → 中转机隧道端口 → 目标 AgentDock(127.0.0.1:8765)
+       (socat/systemd)   (ssh -L/launchd)
+```
+
+- **关键约束：客户端侧 URL 必须落在回环**。MCP 端点默认启用 localhost 保护，
+  非回环 Host 头 → 403 `invalid Host header`（契约见 tool-system/mcp-surface）。
+  所以中继放在**客户端本机**，客户端 URL 用 `http://127.0.0.1:<port>/mcp`；
+  不要把"中转机 IP:端口"直接写进客户端 URL。
+- **ssh -L 的转发目标**写目标机的 `127.0.0.1:8765`（回环必监听），不依赖目标机的
+  局域网绑定地址。
+- **常驻方式**：macOS 中转机用 launchd（KeepAlive 包住 `ssh -N -L`；系统 ssh 不支持
+  `ExitOnRemoteFailure`，写了就 255 退出）；Linux 客户端机用 systemd
+  （`socat TCP-LISTEN:<port>,bind=127.0.0.1,fork,reuseaddr TCP:<中转机>:<port>`）。
+  两跳各有守护进程，断线自动恢复、开机自启。
+- 排障按跳：客户端本机中继进程 → 中转机隧道（`launchctl list | grep <label>`、
+  `systemctl is-active <unit>`）→ 目标机 AgentDock healthz。
 
 ## 部署与验证
 
