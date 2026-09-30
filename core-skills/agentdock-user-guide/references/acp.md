@@ -101,7 +101,7 @@ macOS Desktop 会根据预设自动解析实际 Adapter 路径和参数，原子
 
 优先使用 AgentDock 控制面板管理 ACP Profiles。内置 Codex、Claude、Grok Build 使用固定 Profile ID 且各只能存在一个；Custom 可以创建多个独立 ID。Windows Desktop 会在 PATH、用户 npm 目录、WinGet 链接、Grok 安装目录等位置解析 Adapter；Codex / Claude 也会识别对应 npm package 的 Node.js 入口。
 
-如果必须使用 `agentdock config update`，先读取当前完整控制面板配置，再把端口、日志、浏览器、MCP Apps 等现有设置连同 ACP 设置一起提交；不要只传 ACP 参数导致其他桌面设置被默认值覆盖。
+如果必须使用 `agentdock config update`，先读取当前完整控制面板配置，再把端口、日志、浏览器、聊天卡片等现有设置连同 ACP 设置一起提交；不要只传 ACP 参数导致其他桌面设置被默认值覆盖。
 
 ### Linux、Docker 和直接运行二进制
 
@@ -146,7 +146,7 @@ AgentDock 对外保留稳定的管理语义，不把 ACP 协议的每个底层�
 
 - `acp_session list` 返回一个统一的 `sessions[]`。AgentDock 已管理的会话保留 `session_id=acps_*` 并标记 `managed=true`；只有 Adapter 原生存在、尚未纳管的会话以 `source=remote` 返回。原生发现来自标准 ACP `session/list`，相同 `remote_session_id` 只保留一行；Adapter 不支持时会明确返回 `remote_available=false`，不会伪造远端结果。
 - `open` 可以接收 `session_id` 或 `remote_session_id`。打开原生 session 时只建立 `acps_* -> remote_session_id` 的轻量映射，不复制 transcript；后续自动优先使用 `session/resume`，必要时才使用 `session/load`。
-- `new(from_session_id=...)` 表达 fork；只有 Adapter 广告 fork capability 时才执行。`update` 统一承载 session mode / config option 修改。
+- `new(from_session_id=...)` 表达 fork；只有 Adapter 广告 fork capability 时才执行。`update` 统一承载 session mode / config option 修改，并通过 `change` 返回本次设置的 `field`、`id`、`label` 以及可用的 `before` / `after` 值；原有 `changed` 布尔字段继续表示是否发生实际变化。
 - `inspect(include_history=true)` 才显式读取历史。历史唯一事实源是 Adapter；AgentDock 通过标准 `session/load` 收集 Adapter replay 的公开 `session/update`，不把 Run 事件拼成第二份 transcript，也不暴露 `agent_thought_chunk`。
 - `close` 释放 Adapter 侧资源但保持 AgentDock 映射可再次 `open`；`delete` 是真正删除，必须由 Adapter 广告 delete capability，不支持时不得静默退化成本地解绑。
 - `acp_prompt start` 接收 ACP ContentBlock 数组。`text` 与 `resource_link` 是基线类型；`image`、`audio`、embedded `resource` 按 Adapter 的 `promptCapabilities` 校验。若当前 session 已有 active Run，AgentDock 只在 Adapter 支持 steering 时内部处理 steering，不再公开单独的 `steer` action。

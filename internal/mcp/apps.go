@@ -9,6 +9,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	protocol "github.com/uvwt/agentdock-protocol"
 	"github.com/uvwt/agentdock-protocol/mcpapps"
+	"github.com/uvwt/agentdock/internal/config"
 )
 
 type appResourceDefinition struct {
@@ -20,16 +21,30 @@ type appResourceDefinition struct {
 }
 
 func (s *Server) appResourceDefinitions() []appResourceDefinition {
-	if s == nil || !s.cfg.MCPAppsEnabled {
+	if s == nil || s.cfg.MCPAppsMode == config.MCPAppsModeOff {
 		return nil
 	}
 	definitions := []appResourceDefinition{
+		{
+			URI:         protocol.ImageUIResourceURI,
+			Name:        "agentdock-image",
+			Title:       "AgentDock image",
+			Description: "Display the requested image and, after user confirmation, provide it to the model when supported.",
+			HTML:        mcpapps.HTML("view_image", "Image"),
+		},
 		{
 			URI:         protocol.ContextUIResourceURI,
 			Name:        "agentdock-context",
 			Title:       "AgentDock context",
 			Description: "Compact read-only AgentDock capability summary with expandable bootstrap context.",
 			HTML:        mcpapps.HTML("agentdock_context", "AgentDock context"),
+		},
+		{
+			URI:         protocol.WorkspaceUIResourceURI,
+			Name:        "agentdock-workspace-context",
+			Title:       "AgentDock workspace",
+			Description: "Compact read-only workspace rules and local Skill summary for workspace_context results.",
+			HTML:        mcpapps.HTML("workspace_context", "Workspace"),
 		},
 		{
 			URI:         protocol.TaskProgressUIResourceURI,
@@ -79,13 +94,22 @@ func (s *Server) appResourceDefinitions() []appResourceDefinition {
 		)
 	}
 	if s.cfg.ACPEnabled {
-		definitions = append(definitions, appResourceDefinition{
-			URI:         protocol.ACPStatusUIResourceURI,
-			Name:        "agentdock-acp-status",
-			Title:       "AgentDock ACP status",
-			Description: "Read-only ACP session and runtime status view.",
-			HTML:        mcpapps.HTML("acp_status", "ACP status"),
-		})
+		definitions = append(definitions,
+			appResourceDefinition{
+				URI:         protocol.ACPStatusUIResourceURI,
+				Name:        "agentdock-acp-status",
+				Title:       "AgentDock ACP status",
+				Description: "Read-only ACP session and runtime status view.",
+				HTML:        mcpapps.HTML("acp_status", "ACP status"),
+			},
+			appResourceDefinition{
+				URI:         protocol.ACPPromptUIResourceURI,
+				Name:        "agentdock-acp-prompt",
+				Title:       "AgentDock ACP prompt",
+				Description: "ACP prompt send, event, and cancellation view.",
+				HTML:        mcpapps.HTML("acp_prompt", "ACP Prompt"),
+			},
+		)
 	}
 	return definitions
 }

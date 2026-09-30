@@ -27,8 +27,21 @@ func TestConfigureHidesConsoleWindow(t *testing.T) {
 	}
 }
 
+func TestConfigureBackgroundUsesNoConsoleOnWindows(t *testing.T) {
+	cmd := exec.Command("cmd.exe")
+
+	ConfigureBackground(cmd)
+
+	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.HideWindow {
+		t.Fatal("ConfigureBackground did not hide the Windows child process")
+	}
+	if cmd.SysProcAttr.CreationFlags&windows.CREATE_NO_WINDOW == 0 {
+		t.Fatalf("creation flags = %#x, want CREATE_NO_WINDOW", cmd.SysProcAttr.CreationFlags)
+	}
+}
+
 func TestConfigurePreservesExistingCreationFlags(t *testing.T) {
-	existingFlags := uint32(windows.CREATE_NEW_PROCESS_GROUP)
+	existingFlags := uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS)
 	cmd := exec.Command("cmd.exe")
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: existingFlags}
 

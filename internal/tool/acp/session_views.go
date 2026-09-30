@@ -29,6 +29,7 @@ func mergeSessionList(profileID string, managed []acpruntime.SessionRecord, remo
 			ID: session.ID, Source: "managed", SessionID: session.ID,
 			RemoteSessionID: session.RemoteSessionID, Managed: true,
 			Agent: session.Agent, Status: session.Status, CWD: session.CWD,
+			Title:                 session.Title,
 			AdditionalDirectories: append([]string(nil), session.AdditionalDirectories...),
 		}
 		if !session.UpdatedAt.IsZero() {

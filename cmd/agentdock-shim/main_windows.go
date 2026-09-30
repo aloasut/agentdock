@@ -25,6 +25,11 @@ const (
 	taskCoreHostFlag     = "--task-core-host"
 )
 
+var (
+	shimKernel32         = windows.NewLazySystemDLL("kernel32.dll")
+	procGetConsoleWindow = shimKernel32.NewProc("GetConsoleWindow")
+)
+
 func main() {
 	if len(os.Args) > 1 && strings.EqualFold(strings.TrimSpace(os.Args[1]), taskCoreHostFlag) {
 		exitCode, err := runTaskCoreHost(os.Args[2:])
@@ -80,6 +85,9 @@ func run() error {
 
 	command := exec.Command(target, os.Args[1:]...)
 	command.Dir = root
+	if !tray {
+		configureForwardedCoreCommand(command, shimHasConsoleWindow())
+	}
 	if !tray || trayRequiresWait(os.Args[1:]) {
 		command.Stdin = os.Stdin
 		command.Stdout = os.Stdout
@@ -121,6 +129,20 @@ func run() error {
 		return fmt.Errorf("start AgentDock tray generation: %w", err)
 	}
 	return command.Process.Release()
+}
+
+func configureForwardedCoreCommand(command *exec.Cmd, hasConsole bool) {
+	if hasConsole {
+		return
+	}
+	// stable shim 本身可能由后台 no-console 调用启动。创建标志不会自动传给下一跳，
+	// 因此这里继续把 generation Core 保持为无控制台；交互终端调用则保留原控制台语义。
+	processctl.Configure(command)
+}
+
+func shimHasConsoleWindow() bool {
+	window, _, _ := procGetConsoleWindow.Call()
+	return window != 0
 }
 
 func coreLaunchRequiresParentLifetime(args []string) bool {
@@ -242,6 +264,7 @@ func resolveActiveWithRecovery(root string, store *updateengine.Store, layout up
 	arbiterPath := layout.GenerationArbiter(sourceVersion)
 	command := exec.Command(arbiterPath, "--root", root, "--transaction-id", transaction.TransactionID)
 	command.Dir = root
+	processctl.Configure(command)
 	var recoveryStdout, recoveryStderr bytes.Buffer
 	command.Stdout = &recoveryStdout
 	command.Stderr = &recoveryStderr

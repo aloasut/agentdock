@@ -1,0 +1,420 @@
+package plugin
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/uvwt/agentdock/internal/config"
+)
+
+const (
+	maxMCPFileBytes = 1 << 20
+	mcpSchemaURI    = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
+)
+
+var portableHeaderNamePattern = regexp.MustCompile(`^[!#$%&'*+.^_` + "`" + `|~0-9A-Za-z-]+$`)
+
+type rawMCPServer struct {
+	Type    string            `json:"type"`
+	URL     string            `json:"url,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	CWD     string            `json:"cwd,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+func loadMCPFile(path, packageRoot, pluginName string) ([]MCPComponent, []string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, pluginError("PLUGIN_MCP_INVALID", "mcp.read", err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxMCPFileBytes+1))
+	if err != nil {
+		return nil, nil, pluginError("PLUGIN_MCP_INVALID", "mcp.read", err)
+	}
+	if len(data) > maxMCPFileBytes {
+		return nil, nil, pluginError("PLUGIN_MCP_INVALID", "mcp.read", fmt.Errorf("mcp.json exceeds %d bytes", maxMCPFileBytes))
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var raw map[string]json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return []MCPComponent{}, []string{"mcp.json is preserved but not activated because it is not valid JSON"}, nil
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return []MCPComponent{}, []string{"mcp.json is preserved but not activated because it contains trailing JSON values"}, nil
+		}
+		return []MCPComponent{}, []string{"mcp.json is preserved but not activated because it contains trailing JSON values"}, nil
+	}
+	var servers map[string]json.RawMessage
+	if value, ok := raw["mcpServers"]; !ok || isJSONEmpty(value) {
+		return []MCPComponent{}, []string{"mcp.json is preserved but not activated because mcpServers is missing"}, nil
+	} else if err := json.Unmarshal(value, &servers); err != nil || servers == nil {
+		return []MCPComponent{}, []string{"mcp.json is preserved but not activated because mcpServers is not an object"}, nil
+	}
+
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	components := make([]MCPComponent, 0, len(names))
+	warnings := make([]string, 0)
+	knownFields := map[string]bool{
+		"type": true, "url": true, "command": true, "args": true,
+		"cwd": true, "env": true, "headers": true,
+		"description": true, "note": true,
+	}
+	// oauth_resource 只是外部格式给 OAuth discovery 的提示，不包含凭据，也不改变
+	// AgentDock 的授权策略。真正的 resource/issuer 仍以 401 challenge 与 RFC 9728
+	// metadata 为准，因此可以安全忽略并继续激活；其他未知认证字段仍保持阻断。
+	safeOAuthMetadata := map[string]bool{"oauth_resource": true}
+	for _, name := range names {
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(servers[name], &object); err != nil || object == nil {
+			warnings = append(warnings, fmt.Sprintf("MCP server %s is preserved but not activated because its configuration is not an object", name))
+			continue
+		}
+		unknown := make([]string, 0)
+		for key, value := range object {
+			if knownFields[key] || isJSONEmpty(value) {
+				continue
+			}
+			if safeOAuthMetadata[key] {
+				warnings = append(warnings, fmt.Sprintf("MCP server %s metadata field %s is not used by AgentDock runtime", name, key))
+				continue
+			}
+			unknown = append(unknown, key)
+		}
+		if len(unknown) > 0 {
+			sort.Strings(unknown)
+			warnings = append(warnings, fmt.Sprintf("MCP server %s is preserved but not activated because AgentDock does not interpret fields: %s", name, strings.Join(unknown, ", ")))
+			continue
+		}
+		var server rawMCPServer
+		if err := json.Unmarshal(servers[name], &server); err != nil {
+			warnings = append(warnings, fmt.Sprintf("MCP server %s is preserved but not activated because its supported fields have invalid types", name))
+			continue
+		}
+		component, unsupportedReason, err := normalizeMCPComponent(packageRoot, pluginName, name, server)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("MCP server %s is preserved but not activated: %v", name, err))
+			continue
+		}
+		if unsupportedReason != "" {
+			warnings = append(warnings, unsupportedReason+"; server is preserved but not activated")
+			continue
+		}
+		components = append(components, component)
+	}
+	sort.Strings(warnings)
+	return components, uniqueStrings(warnings), nil
+}
+
+func normalizeMCPComponent(packageRoot, pluginName, name string, raw rawMCPServer) (MCPComponent, string, error) {
+	name = strings.TrimSpace(name)
+	if err := validateComponentName(name); err != nil {
+		return MCPComponent{}, "", err
+	}
+	component := MCPComponent{
+		Name:           name,
+		Description:    pluginName + " Plugin MCP: " + name,
+		URL:            strings.TrimSpace(raw.URL),
+		Command:        strings.TrimSpace(raw.Command),
+		Args:           append([]string(nil), raw.Args...),
+		CWD:            strings.TrimSpace(raw.CWD),
+		Environment:    cloneStringMap(raw.Env),
+		Headers:        cloneStringMap(raw.Headers),
+		TimeoutMS:      30000,
+		RuntimeName:    RuntimeMCPName(pluginName, name),
+		StorageKey:     RuntimeMCPName(pluginName, name),
+		RelativeSource: "mcp.json",
+	}
+
+	switch strings.TrimSpace(raw.Type) {
+	case "stdio":
+		component.Transport = "stdio"
+		if component.Command == "" {
+			return MCPComponent{}, "", errors.New("stdio command is required")
+		}
+		if component.URL != "" || len(component.Headers) > 0 {
+			return MCPComponent{}, "", errors.New("HTTP-only fields are not allowed for stdio MCP")
+		}
+		if err := validatePortableCommand(packageRoot, component.Command); err != nil {
+			return MCPComponent{}, "", err
+		}
+		if err := normalizePortableEnvironment(&component); err != nil {
+			return MCPComponent{}, "", err
+		}
+		if err := validatePortableCWD(component.CWD); err != nil {
+			return MCPComponent{}, "", err
+		}
+		return component, "", nil
+
+	case "streamable-http":
+		component.Transport = "streamable_http"
+		if component.URL == "" {
+			return MCPComponent{}, "", errors.New("streamable-http url is required")
+		}
+		if component.Command != "" || len(component.Args) > 0 || component.CWD != "" || len(component.Environment) > 0 {
+			return MCPComponent{}, "", errors.New("stdio-only fields are not allowed for streamable-http MCP")
+		}
+		if err := validatePortableRemoteURL(component.URL); err != nil {
+			return MCPComponent{}, "", err
+		}
+		if err := normalizePortableHeaders(&component); err != nil {
+			return MCPComponent{}, "", err
+		}
+		return component, "", nil
+
+	case "sse":
+		component.Transport = "sse"
+		if component.URL == "" {
+			return MCPComponent{}, "", errors.New("sse url is required")
+		}
+		if component.Command != "" || len(component.Args) > 0 || component.CWD != "" || len(component.Environment) > 0 {
+			return MCPComponent{}, "", errors.New("stdio-only fields are not allowed for sse MCP")
+		}
+		if err := validatePortableRemoteURL(component.URL); err != nil {
+			return MCPComponent{}, "", err
+		}
+		if err := normalizePortableHeaders(&component); err != nil {
+			return MCPComponent{}, "", err
+		}
+		return component, "MCP server " + name + " uses unsupported sse transport", nil
+
+	default:
+		return MCPComponent{}, "", fmt.Errorf("unsupported MCP transport %q", raw.Type)
+	}
+}
+
+func validatePortableCommand(root, command string) error {
+	if filepath.IsAbs(command) {
+		return errors.New("Plugin MCP command must be a bare executable or begin with ./")
+	}
+	if strings.Contains(command, "${") {
+		return errors.New("placeholder expansion is not allowed in Plugin MCP command")
+	}
+	if strings.ContainsAny(command, "/\\") {
+		if !strings.HasPrefix(filepath.ToSlash(command), "./") {
+			return errors.New("Plugin-relative MCP command must begin with ./")
+		}
+		return validateRelativePackageReference(root, strings.TrimPrefix(filepath.ToSlash(command), "./"), false)
+	}
+	if command == "." || command == ".." || strings.TrimSpace(command) != command {
+		return errors.New("invalid Plugin MCP command")
+	}
+	return nil
+}
+
+func validatePortableCWD(cwd string) error {
+	if cwd == "" {
+		return nil
+	}
+	syntheticRoot := filepath.Join(string(filepath.Separator), "plugin-root")
+	syntheticData := filepath.Join(string(filepath.Separator), "plugin-data")
+	var expanded string
+	switch {
+	case strings.HasPrefix(cwd, "./"):
+		expanded = filepath.Join(syntheticRoot, filepath.FromSlash(strings.TrimPrefix(cwd, "./")))
+	case cwd == "${PLUGIN_ROOT}":
+		expanded = syntheticRoot
+	case strings.HasPrefix(cwd, "${PLUGIN_ROOT}/"):
+		expanded = filepath.Join(syntheticRoot, filepath.FromSlash(strings.TrimPrefix(cwd, "${PLUGIN_ROOT}/")))
+	case cwd == "${PLUGIN_DATA}":
+		expanded = syntheticData
+	case strings.HasPrefix(cwd, "${PLUGIN_DATA}/"):
+		expanded = filepath.Join(syntheticData, filepath.FromSlash(strings.TrimPrefix(cwd, "${PLUGIN_DATA}/")))
+	default:
+		return errors.New("Plugin MCP cwd must begin with ./, ${PLUGIN_ROOT}, or ${PLUGIN_DATA}")
+	}
+	base := syntheticRoot
+	if strings.HasPrefix(cwd, "${PLUGIN_DATA}") {
+		base = syntheticData
+	}
+	relative, err := filepath.Rel(base, filepath.Clean(expanded))
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return errors.New("Plugin MCP cwd escapes its declared portable root")
+	}
+	return nil
+}
+
+func validatePortableRemoteURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("remote MCP url must be an absolute HTTP(S) URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New("remote MCP url must use http or https")
+	}
+	if parsed.User != nil || parsed.Fragment != "" {
+		return errors.New("remote MCP url must not contain user info or fragments; use env-backed headers for credentials")
+	}
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return errors.New("non-loopback remote MCP endpoints must use https")
+	}
+	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(strings.TrimSpace(host), "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func normalizePortableEnvironment(component *MCPComponent) error {
+	static := make(map[string]string)
+	bindings := make(map[string]string)
+	required := append([]string(nil), component.RequiredEnv...)
+	for key, value := range component.Environment {
+		if err := validateEnvName(key); err != nil {
+			return err
+		}
+		if config.IsReservedPluginEnvironmentKey(key) {
+			return fmt.Errorf("environment variable %s is reserved by the Plugin runtime", key)
+		}
+		if envName, requiredBinding, ok := exactEnvironmentReference(value); ok && !config.IsReservedPluginEnvironmentKey(envName) {
+			bindings[key] = envName
+			if requiredBinding {
+				required = append(required, envName)
+			}
+			continue
+		}
+		if sensitiveEnvironmentName(key) {
+			return fmt.Errorf("sensitive environment variable %s must use a ${ENV_NAME} binding (or ${ENV_NAME:-} when optional) instead of a literal value", key)
+		}
+		static[key] = value
+	}
+	if len(static) == 0 {
+		static = nil
+	}
+	if len(bindings) == 0 {
+		bindings = nil
+	}
+	sort.Strings(required)
+	component.Environment = static
+	component.EnvBindings = bindings
+	component.RequiredEnv = uniqueStrings(required)
+	return nil
+}
+
+func normalizePortableHeaders(component *MCPComponent) error {
+	static := make(map[string]string)
+	bindings := make(map[string]string)
+	required := append([]string(nil), component.RequiredEnv...)
+	for rawName, value := range component.Headers {
+		name := strings.TrimSpace(rawName)
+		if !portableHeaderNamePattern.MatchString(name) {
+			return fmt.Errorf("invalid HTTP header name %q", name)
+		}
+		if strings.ContainsRune(value, '\r') || strings.ContainsRune(value, '\n') {
+			return fmt.Errorf("HTTP header %q contains a newline", name)
+		}
+		if envName, requiredBinding, ok := exactEnvironmentReference(value); ok && !config.IsReservedPluginEnvironmentKey(envName) {
+			bindings[name] = envName
+			if requiredBinding {
+				required = append(required, envName)
+			}
+			continue
+		}
+		switch strings.ToLower(name) {
+		case "authorization", "proxy-authorization", "cookie", "set-cookie":
+			return fmt.Errorf("credential header %q must use a ${ENV_NAME} binding (or ${ENV_NAME:-} when optional) instead of a literal value", name)
+		}
+		static[name] = value
+	}
+	if len(static) == 0 {
+		static = nil
+	}
+	if len(bindings) == 0 {
+		bindings = nil
+	}
+	sort.Strings(required)
+	component.Headers = static
+	component.HeaderEnv = bindings
+	component.RequiredEnv = uniqueStrings(required)
+	return nil
+}
+
+func exactEnvironmentReference(value string) (string, bool, bool) {
+	value = strings.TrimSpace(value)
+	if len(value) < 4 || !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
+		return "", false, false
+	}
+	name := value[2 : len(value)-1]
+	// ${ENV} 是必填绑定；${ENV:-} 表示可选绑定，未配置或为空时展开为空字符串。
+	required := true
+	if strings.HasSuffix(name, ":-") {
+		name = strings.TrimSuffix(name, ":-")
+		required = false
+	}
+	if strings.ContainsAny(name, "${}/\\") || validateEnvName(name) != nil {
+		return "", false, false
+	}
+	return name, required, true
+}
+
+func sensitiveEnvironmentName(name string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(name))
+	for _, marker := range []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY", "APIKEY", "CREDENTIAL", "AUTH"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func validateRelativePackageReference(root, value string, allowDirectory bool) error {
+	clean := filepath.Clean(filepath.FromSlash(strings.TrimSpace(value)))
+	if clean == "." || clean == "" || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
+		return fmt.Errorf("path %q escapes the Plugin package", value)
+	}
+	target := filepath.Join(root, clean)
+	relative, err := filepath.Rel(root, target)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return fmt.Errorf("path %q escapes the Plugin package", value)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		return fmt.Errorf("path %q is unavailable: %w", value, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("path %q cannot be a symlink", value)
+	}
+	if allowDirectory {
+		if !info.IsDir() {
+			return fmt.Errorf("path %q must be a directory", value)
+		}
+		return nil
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("path %q must be a regular file", value)
+	}
+	return nil
+}

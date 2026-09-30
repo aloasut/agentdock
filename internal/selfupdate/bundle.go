@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	processcontrol "github.com/uvwt/agentdock/internal/process"
 )
 
 func extractCoreSkillBundle(archiveData []byte, goos, tempDir string) (string, error) {
@@ -129,12 +131,29 @@ func bootstrapBundledSkills(ctx context.Context, binaryPath, bundlePath string, 
 		return errors.New("核心 Skill Bundle 路径不能为空")
 	}
 	command := exec.CommandContext(ctx, binaryPath, "skill", "bootstrap", "--bundle", bundlePath)
+	processcontrol.ConfigureBackground(command)
 	combined, err := command.CombinedOutput()
 	if len(combined) > 0 && output != nil {
 		_, _ = output.Write(combined)
 	}
 	if err != nil {
 		return fmt.Errorf("执行核心 Skill bootstrap 失败: %w: %s", err, strings.TrimSpace(string(combined)))
+	}
+	return nil
+}
+
+// finalizeLegacySkillMigration 必须只在外层更新已经越过 rollback commit point 后调用。
+// 旧版 updater 不认识这个新动作时不会调用它，因此 legacy roots 会继续原地保留，
+// 仍可供旧二进制回滚读取；新版 updater 则在最终成功后显式收口迁移。
+func finalizeLegacySkillMigration(ctx context.Context, binaryPath string, output io.Writer) error {
+	command := exec.CommandContext(ctx, binaryPath, "skill", "finalize-migration")
+	processcontrol.ConfigureBackground(command)
+	combined, err := command.CombinedOutput()
+	if len(combined) > 0 && output != nil {
+		_, _ = output.Write(combined)
+	}
+	if err != nil {
+		return fmt.Errorf("完成 legacy Skill migration 失败: %w: %s", err, strings.TrimSpace(string(combined)))
 	}
 	return nil
 }

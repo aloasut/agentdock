@@ -137,7 +137,7 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 		LogLevel:                request.LogLevel,
 		ListenMode:              listenMode,
 		OAuthAccessTokenTTL:     request.OAuthAccessTokenTTL,
-		MCPAppsEnabled:          request.MCPAppsEnabled,
+		MCPAppsMode:             request.MCPAppsMode,
 		BrowserEnabled:          request.BrowserEnabled,
 		BrowserCDPURL:           request.BrowserCDPURL,
 		BrowserReuseExistingCDP: request.BrowserReuseExistingCDP,

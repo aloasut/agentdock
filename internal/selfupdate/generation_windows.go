@@ -17,6 +17,7 @@ import (
 
 	"github.com/uvwt/agentdock/internal/desktopruntime"
 	"github.com/uvwt/agentdock/internal/fs/atomicfile"
+	processcontrol "github.com/uvwt/agentdock/internal/process"
 	"github.com/uvwt/agentdock/internal/updateengine"
 )
 
@@ -111,6 +112,7 @@ func applyWindowsGenerationUpdate(ctx context.Context, request applyRequest) (ap
 	reportUpdateStage(request.Progress, UpdateStageRestarting, request.CurrentVersion, request.TargetVersion, "arbiter")
 	command := exec.CommandContext(ctx, sourceArbiter, "--root", root, "--transaction-id", transaction.TransactionID)
 	command.Dir = root
+	processcontrol.Configure(command)
 	output, runErr := command.CombinedOutput()
 	if len(bytes.TrimSpace(output)) > 0 {
 		fmt.Fprintf(request.Output, "%s\n", bytes.TrimSpace(output))
@@ -137,8 +139,11 @@ func applyWindowsGenerationUpdate(ctx context.Context, request applyRequest) (ap
 	if err := atomicfile.Write(filepath.Join(root, windowsDesktopVersionFile), []byte(normalizeVersion(request.TargetVersion)+"\n"), 0o600); err != nil {
 		fmt.Fprintf(request.Output, "警告：写入 Windows 桌面版本标记失败: %v\n", err)
 	}
-	if err := bootstrapBundledSkills(ctx, layout.GenerationCore(request.TargetVersion), layout.GenerationSkills(request.TargetVersion), request.Output); err != nil {
+	targetCore := layout.GenerationCore(request.TargetVersion)
+	if err := bootstrapBundledSkills(ctx, targetCore, layout.GenerationSkills(request.TargetVersion), request.Output); err != nil {
 		fmt.Fprintf(request.Output, "警告：新版本已提交，但官方核心 Skill 同步失败: %v\n", err)
+	} else if err := finalizeLegacySkillMigration(ctx, targetCore, request.Output); err != nil {
+		fmt.Fprintf(request.Output, "警告：legacy Skill migration 暂未收口，旧目录将继续保留用于回滚: %v\n", err)
 	}
 	garbageCollectWindowsGenerations(layout, normalizeVersion(request.TargetVersion), sourceVersion)
 	return applyResult{Restarted: coreWasRunning}, nil

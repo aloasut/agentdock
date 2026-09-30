@@ -30,6 +30,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+[int] $coreHealthTimeoutSeconds = 60
 
 function Invoke-SetupRuntimeProcess {
     param(
@@ -956,7 +957,7 @@ function Wait-AgentDockHealth {
     param([int] $HealthPort)
 
     $healthUrl = "http://127.0.0.1:$HealthPort/healthz"
-    $deadline = [DateTime]::UtcNow.AddSeconds(45)
+    $deadline = [DateTime]::UtcNow.AddSeconds($coreHealthTimeoutSeconds)
     do {
         Start-Sleep -Milliseconds 500
         try {
@@ -1229,7 +1230,13 @@ $managedRuntimeFiles = @(
     @{ Path = (Join-Path $runtimeDir 'update\result.json'); Name = 'update-result.json' }
 )
 
+$previousConsoleOutputEncoding = $null
 try {
+    # AgentDock CLI structured stdout is UTF-8. Windows PowerShell 5.1 otherwise
+    # decodes native stdout with the active OEM code page, which can corrupt JSON paths.
+    $previousConsoleOutputEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = $Utf8NoBom
+
     $existingInstallDetected =
         (Test-Path -LiteralPath $destinationBinary -PathType Leaf) -or
         (Test-Path -LiteralPath $runtimeManifestPath -PathType Leaf) -or
@@ -1253,7 +1260,7 @@ try {
     $existingPrivilegeMode = ''
     if (Test-Path -LiteralPath $runtimeManifestPath -PathType Leaf) {
         try {
-            $existingManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw | ConvertFrom-Json
+            $existingManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $existingPrivilegeMode = [string] $existingManifest.privilege_mode
         } catch {
             $existingPrivilegeMode = ''
@@ -2323,6 +2330,9 @@ exit `$LASTEXITCODE
         -ErrorRecord $resultErrorRecord
     throw $installError
 } finally {
+    if ($null -ne $previousConsoleOutputEncoding) {
+        [Console]::OutputEncoding = $previousConsoleOutputEncoding
+    }
     if ($null -ne $installerTransactionLease) {
         Exit-InstallerTransactionLease -Lease $installerTransactionLease
         $installerTransactionLease = $null

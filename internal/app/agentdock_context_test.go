@@ -53,7 +53,7 @@ func TestAgentDockContextToolReturnsStructuredRuntimeIndex(t *testing.T) {
 	}
 	if demo == nil || demo.Description != "Use this Skill for context index tests." ||
 		demo.File != "skill://managed/demo-skill/SKILL.md" || demo.SkillRef != "skill://managed/demo-skill" ||
-		demo.SourceType != "managed" || demo.ContentDigest == "" {
+		demo.SourceType != "managed" {
 		t.Fatalf("structured Skill index missing demo-skill: %#v", got.Skills)
 	}
 	if got.CommonSkills == nil || got.CommonSkills.Total != 1 || len(got.CommonSkills.Items) != 1 {
@@ -65,7 +65,7 @@ func TestAgentDockContextToolReturnsStructuredRuntimeIndex(t *testing.T) {
 		commonDemo.SourceType != "shared" {
 		t.Fatalf("common Skill index missing duplicate demo-skill: %#v", got.CommonSkills)
 	}
-	if got.DynamicMCP == nil || got.WorkflowTemplates == nil || got.Rules == nil {
+	if got.Plugins == nil || got.DynamicMCP == nil || got.WorkflowTemplates == nil || got.Rules == nil {
 		t.Fatalf("required structured context fields must be arrays: %#v", got)
 	}
 	if got.Runtime == nil || got.Runtime.Version == "" || got.Runtime.OS == "" || got.Runtime.Arch == "" || got.Runtime.PathModel != config.PathModel {
@@ -289,26 +289,62 @@ func TestAgentDockLocalContextSkipsSharedNexusLookups(t *testing.T) {
 
 func TestCapabilitySkillItemExposesOnlyLightweightIndexFields(t *testing.T) {
 	data, err := json.Marshal(capabilitySkillItem{
-		Name:          "desktop",
-		Description:   "Desktop automation.",
-		File:          "skill://managed/desktop/SKILL.md",
-		SkillRef:      "skill://managed/desktop",
-		SourceType:    "managed",
-		SourceID:      "desktop",
-		ContentDigest: "abc123",
+		Name:        "desktop",
+		Description: "Desktop automation.",
+		File:        "skill://managed/desktop/SKILL.md",
+		SkillRef:    "skill://managed/desktop",
+		SourceType:  "managed",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, want := range []string{`"name"`, `"description"`, `"file"`, `"skill_ref"`, `"source_type"`, `"source_id"`, `"content_digest"`} {
+	for _, want := range []string{`"name"`, `"description"`, `"file"`, `"skill_ref"`, `"source_type"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("Skill index JSON missing %s: %s", want, text)
 		}
 	}
-	for _, unwanted := range []string{`"active_version"`, `"updated_at"`, `"operation_count"`, `"version"`, `"path"`, `"manifest"`, `"bundled"`} {
+	for _, unwanted := range []string{`"source_id"`, `"content_digest"`, `"active_version"`, `"updated_at"`, `"operation_count"`, `"version"`, `"path"`, `"manifest"`, `"bundled"`} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("Skill index JSON should not expose %s: %s", unwanted, text)
+		}
+	}
+}
+
+func TestSkillCapabilityIndexKeepsFullValidatedDescriptions(t *testing.T) {
+	cfg := config.Config{
+		AgentDockDefaultDir: t.TempDir(),
+		AgentDockHome:       filepath.Join(t.TempDir(), ".agentdock"),
+	}
+	if err := cfg.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := NewRuntime(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rt.Close() })
+
+	descriptions := map[string]string{
+		"english-long":    strings.Repeat("routing boundary; ", 16) + "final boundary",
+		"chinese-long":    strings.Repeat("中文路由边界", 32),
+		"max-description": strings.Repeat("x", 1024),
+	}
+	for name, description := range descriptions {
+		installDocumentSkillForTest(t, rt, name, "1.0.0", description)
+	}
+
+	items, err := rt.skillCapabilityIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]string, len(items))
+	for _, item := range items {
+		got[item.Name] = item.Description
+	}
+	for name, want := range descriptions {
+		if got[name] != want {
+			t.Fatalf("%s description length=%d, want full length=%d", name, len(got[name]), len(want))
 		}
 	}
 }

@@ -102,8 +102,7 @@ func TestWorkspaceContextLoadsFixedGlobalNestedRulesAndLocalSkills(t *testing.T)
 	}
 	if !strings.HasPrefix(got.WorkspaceSkills[0].File, "skill://workspace/") ||
 		!strings.HasSuffix(got.WorkspaceSkills[0].File, "/a-skill/SKILL.md") ||
-		got.WorkspaceSkills[0].SkillRef == "" || got.WorkspaceSkills[0].SourceType != "workspace" ||
-		got.WorkspaceSkills[0].SourceID == "" {
+		got.WorkspaceSkills[0].SkillRef == "" || got.WorkspaceSkills[0].SourceType != "workspace" {
 		t.Fatalf("workspace Skill file = %q", got.WorkspaceSkills[0].File)
 	}
 	encoded, err := json.Marshal(got)
@@ -207,6 +206,18 @@ func TestWorkspaceContextReportsBoundedInvalidAndOversizedInstructions(t *testin
 		if file.Content != "" {
 			t.Fatalf("invalid instruction returned partial body: %#v", file)
 		}
+	}
+}
+
+func TestWorkspaceContextSkillIndexKeepsFullDescription(t *testing.T) {
+	rt, _ := newWorkspaceContextRuntime(t)
+	root := filepath.Join(rt.ws.Root(), ".agents", "skills")
+	description := strings.Repeat("workspace routing boundary; ", 12) + "final boundary"
+	writeCommonSkillForTest(t, root, "workspace-long", "workspace-long", description)
+
+	got := callWorkspaceContext(t, rt, nil)
+	if len(got.WorkspaceSkills) != 1 || got.WorkspaceSkills[0].Description != description {
+		t.Fatalf("workspace Skill description was truncated: %#v", got.WorkspaceSkills)
 	}
 }
 

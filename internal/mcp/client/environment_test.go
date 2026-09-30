@@ -43,7 +43,7 @@ func TestStdioEnvironmentRequiresMappedHostValue(t *testing.T) {
 		EnvFromEnv: map[string]string{"CHILD": "AGENTDOCK_MISSING_HOST_VALUE"},
 	})
 	mcpErr, ok := err.(*Error)
-	if !ok || mcpErr.Code != "MCP_AUTH_REQUIRED" {
+	if !ok || mcpErr.Code != "MCP_CREDENTIAL_REQUIRED" {
 		t.Fatalf("unexpected error: %T %v", err, err)
 	}
 }
@@ -77,6 +77,48 @@ func TestHTTPHeaderUsesScopedEnvironmentBeforeHost(t *testing.T) {
 	_ = response.Body.Close()
 	if received != "scoped-token" {
 		t.Fatalf("HTTP header = %q, want scoped-token", received)
+	}
+}
+
+func TestPluginHTTPHeaderOptionalBindingIsOmittedWhenUnset(t *testing.T) {
+	headers, err := resolveHTTPHeaders(ServerConfig{
+		Name:       "context7",
+		SourceType: "plugin",
+		HeaderEnv:  map[string]string{"Authorization": "CONTEXT7_API_KEY"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := headers["Authorization"]; exists {
+		t.Fatalf("optional Authorization header = %#v, want header omitted", headers)
+	}
+}
+
+func TestPluginStdioOptionalBindingExpandsToEmptyEnvironment(t *testing.T) {
+	environment, err := stdioEnvironment(ServerConfig{
+		Name:       "demo",
+		SourceType: "plugin",
+		RuntimeEnv: map[string]string{"OPTIONAL": ""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := formattedEnvironmentMap(environment)
+	if value, exists := values["OPTIONAL"]; !exists || value != "" {
+		t.Fatalf("optional stdio environment = %#v, want OPTIONAL=", values)
+	}
+}
+
+func TestPluginHTTPHeaderRequiredBindingRejectsMissingValue(t *testing.T) {
+	_, err := resolveHTTPHeaders(ServerConfig{
+		Name:        "required",
+		SourceType:  "plugin",
+		HeaderEnv:   map[string]string{"Authorization": "REQUIRED_TOKEN"},
+		RequiredEnv: []string{"REQUIRED_TOKEN"},
+	})
+	mcpErr, ok := err.(*Error)
+	if !ok || mcpErr.Code != "MCP_CREDENTIAL_REQUIRED" {
+		t.Fatalf("resolveHTTPHeaders() error = %T %v, want MCP_CREDENTIAL_REQUIRED", err, err)
 	}
 }
 

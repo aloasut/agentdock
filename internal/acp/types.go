@@ -98,6 +98,7 @@ type SessionRecord struct {
 	Agent                 string        `json:"agent"`
 	RemoteSessionID       string        `json:"remote_session_id"`
 	CWD                   string        `json:"cwd"`
+	Title                 string        `json:"title,omitempty"`
 	AdditionalDirectories []string      `json:"additional_directories,omitempty"`
 	ModeID                string        `json:"mode_id,omitempty"`
 	Status                SessionStatus `json:"status"`

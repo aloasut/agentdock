@@ -5,6 +5,7 @@ import (
 
 	"github.com/uvwt/agentdock/internal/envstore"
 	mcpclient "github.com/uvwt/agentdock/internal/mcp/client"
+	"github.com/uvwt/agentdock/internal/mcp/oauthclient"
 )
 
 type Service struct {
@@ -18,10 +19,29 @@ func New(manager *mcpclient.Manager, envs *envstore.Store) *Service {
 
 type CapabilityItem struct {
 	Name          string
+	DisplayName   string
 	Description   string
+	SourceType    string
+	PluginName    string
 	Status        string
 	ToolCount     int
 	LastErrorCode string
+}
+
+func (s *Service) SetOAuthCallback(option oauthclient.CallbackOption) error {
+	return s.mcpClients.SetOAuthCallback(option)
+}
+
+func (s *Service) RemoveOAuthCallback(id string) {
+	s.mcpClients.RemoveOAuthCallback(id)
+}
+
+func (s *Service) DeliverOAuthCallback(result oauthclient.CallbackResult) error {
+	return s.mcpClients.DeliverOAuthCallback(result)
+}
+
+func (s *Service) RemoveOAuthGrant(storageKey string) error {
+	return s.mcpClients.RemoveOAuthGrant(storageKey)
 }
 
 func (s *Service) CapabilityItems() []CapabilityItem {
@@ -29,7 +49,8 @@ func (s *Service) CapabilityItems() []CapabilityItem {
 	items := make([]CapabilityItem, 0, len(servers))
 	for _, server := range servers {
 		items = append(items, CapabilityItem{
-			Name: server.Name, Description: server.Description, Status: server.Status,
+			Name: server.Name, DisplayName: server.DisplayName, Description: server.Description,
+			SourceType: server.SourceType, PluginName: server.PluginName, Status: server.Status,
 			ToolCount: server.ToolCount, LastErrorCode: server.LastErrorCode,
 		})
 	}

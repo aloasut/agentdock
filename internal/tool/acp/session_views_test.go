@@ -36,10 +36,10 @@ func TestMergeSessionListDeduplicatesManagedRemoteIdentity(t *testing.T) {
 
 func TestMergeSessionListKeepsManagedRowsWhenRemoteListingUnavailable(t *testing.T) {
 	managed := []acpruntime.SessionRecord{{
-		ID: "acps_1", Agent: "claude", RemoteSessionID: "sess_1", CWD: "/workspace", Status: acpruntime.SessionClosed,
+		ID: "acps_1", Agent: "claude", RemoteSessionID: "sess_1", CWD: "/workspace", Title: "Persisted title", Status: acpruntime.SessionClosed,
 	}}
 	items := mergeSessionList("claude", managed, nil)
-	if len(items) != 1 || items[0].ID != "acps_1" || items[0].Source != "managed" || !items[0].Managed || items[0].RemoteListed {
+	if len(items) != 1 || items[0].ID != "acps_1" || items[0].Source != "managed" || !items[0].Managed || items[0].RemoteListed || items[0].Title != "Persisted title" {
 		t.Fatalf("managed-only list = %#v", items)
 	}
 }

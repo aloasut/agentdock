@@ -162,6 +162,7 @@ func (m *Manager) AttachRemoteSession(remote RemoteSession) (SessionRecord, erro
 		Agent:                 m.opts.Agent.Name,
 		RemoteSessionID:       remoteID,
 		CWD:                   resolved,
+		Title:                 strings.TrimSpace(remote.Title),
 		AdditionalDirectories: additional,
 		Status:                SessionClosed,
 		CreatedAt:             now,

@@ -18,9 +18,11 @@ import (
 	"github.com/uvwt/agentdock/internal/mcp"
 	"github.com/uvwt/agentdock/internal/publicartifacts"
 	"github.com/uvwt/agentdock/internal/runtimeapi"
+	"github.com/uvwt/agentdock/internal/startupdiag"
 )
 
 func Serve(ctx context.Context, server *mcp.Server, runtime runtimeapi.Runtime, cfg config.Config) error {
+	listenStartedAt := time.Now()
 	authRequired := cfg.AuthRequired()
 	oauthStore := auth.NewOAuthStore()
 	if cfg.OAuthEnabled {
@@ -39,7 +41,9 @@ func Serve(ctx context.Context, server *mcp.Server, runtime runtimeapi.Runtime, 
 		return fmt.Errorf("clean public artifacts: %w", err)
 	}
 	slog.Info("http server configured", "host", cfg.Host, "port", cfg.Port, "auth_required", authRequired, "endpoint", "/mcp")
-	mux.HandleFunc("/", statusPageHandler(server, cfg))
+	mux.HandleFunc("/", statusPageHandler(server, runtime, cfg))
+	mux.Handle("/analytics", loopbackOnly(analyticsPageHandler()))
+	mux.Handle("/analytics/data", loopbackOnly(analyticsDataHandler(runtime)))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		writeJSON(w, map[string]any{"ok": true, "version": buildinfo.Version})
@@ -54,6 +58,7 @@ func Serve(ctx context.Context, server *mcp.Server, runtime runtimeapi.Runtime, 
 		publicArtifactStore.ServeHTTP(w, r, "/artifacts/public/")
 	})
 	registerOAuthRoutes(mux, cfg, oauthStore)
+	registerMCPOAuthCallback(mux, runtime)
 	mux.HandleFunc("/context", agentDockContextHandler(server, cfg, oauthStore))
 	registerRuntimeAPI(mux, runtime, cfg, oauthStore)
 	mux.HandleFunc("/mcp", mcpEndpointHandler(server, cfg, oauthStore))
@@ -79,6 +84,7 @@ func Serve(ctx context.Context, server *mcp.Server, runtime runtimeapi.Runtime, 
 		listeners = append(listeners, listener)
 		httpServer := newHTTPServer(addr, loggingMiddleware(mux))
 		servers = append(servers, httpServer)
+		startupdiag.Log(slog.Default(), "core", "http_listen", listenStartedAt, slog.String("addr", addr))
 		slog.Info("http server listening", "addr", addr)
 	}
 	return serveHTTPListeners(ctx, servers, listeners)

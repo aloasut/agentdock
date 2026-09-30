@@ -106,10 +106,29 @@ func OutputSchema(name string) (map[string]any, bool) {
 		props["modes"] = objectProp("Session modes returned by the ACP agent when present.")
 		props["config_options"] = arrayProp("Current session configuration options returned by the ACP agent when present.")
 		props["changed"] = boolProp("Whether update changed at least one session setting.")
+		changeValue := map[string]any{
+			"description": "Setting value observed before or after update.",
+			"oneOf":       []map[string]any{{"type": "string"}, {"type": "boolean"}},
+		}
+		props["change"] = map[string]any{
+			"type":                 "object",
+			"description":          "Setting targeted by update, with observed before/after values when available.",
+			"additionalProperties": false,
+			"required":             []string{"field", "id", "label"},
+			"properties": map[string]any{
+				"field":  map[string]any{"type": "string", "enum": []string{"mode", "config_option"}},
+				"id":     stringProp("Mode/config option identifier."),
+				"label":  stringProp("Human-readable setting label."),
+				"before": changeValue,
+				"after":  changeValue,
+			},
+		}
 		props["deleted"] = boolProp("Whether the Adapter-native session was deleted.")
+		props["title"] = stringProp("Human-readable session title when available.")
 	case ToolPrompt:
 		props["profile_id"] = stringProp("ACP profile id that handled the request.")
 		props["action"] = stringProp("Completed ACP prompt action.")
+		props["title"] = stringProp("Human-readable session title when available.")
 		props["run_id"] = stringProp("AgentDock ACP prompt run id.")
 		props["session_id"] = stringProp("AgentDock ACP session id.")
 		props["status"] = stringProp("ACP prompt Run status.")

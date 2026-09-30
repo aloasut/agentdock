@@ -253,6 +253,10 @@ final class ServiceController: @unchecked Sendable {
         }
     }
 
+    func restartTunnel() throws {
+        try reregister(service: tunnelService, label: Self.tunnelLabel, displayName: "AgentDock Tunnel")
+    }
+
     func restoreBackgroundServiceRegistrations(coreEnabled: Bool, tunnelEnabled: Bool) throws {
         if coreEnabled {
             try restoreRegistration(service: coreService, label: Self.coreLabel, displayName: "AgentDock Core")
@@ -295,15 +299,34 @@ final class ServiceController: @unchecked Sendable {
     }
 
     func recoverBackgroundServicesAfterUpdate(coreEnabled: Bool, tunnelEnabled: Bool) async -> [String] {
-        // Legacy 更新没有 Arbiter 的 Core health/version gate，因此这里只对 Core 做一次有界等待。
-        // Tunnel/public readiness 是外部 soft dependency，只由面板和日志展示，不阻塞更新收尾。
+        // App Bundle 替换后，SMAppService 可能已经返回 enabled，但 launchd 尚未真正启动 Core。
+        // 先给系统一个正常传播窗口；仍不健康时只做一次完整 unregister/register 自愈。
+        // 最终更新是否提交仍由外部 Arbiter 的 Core health/version gate 决定。
         var warnings: [String] = []
-        _ = tunnelEnabled
+        if tunnelEnabled,
+           tunnelService.status == .enabled,
+           !(await waitForTunnelProcess()) {
+            NSLog("AgentDock Tunnel 注册显示 enabled 但进程未稳定，开始自动重新注册。")
+            do {
+                try restartTunnel()
+                if !(await waitForTunnelProcess()) {
+                    NSLog("AgentDock Tunnel 重新注册后进程仍未稳定。")
+                }
+            } catch {
+                // Tunnel/public readiness is intentionally outside the update commit boundary.
+                NSLog("AgentDock Tunnel 自动重新注册失败：%@", error.localizedDescription)
+            }
+        }
         if coreEnabled,
            coreService.status == .enabled,
            let configuration = ServiceConfiguration.load(from: paths.environment),
            !(await waitForHealth(configuration: configuration, timeout: 10)) {
-            warnings.append(L10n.text("AgentDock background service is enabled, but the health check did not pass."))
+            NSLog("AgentDock Core 注册显示 enabled 但健康检查未通过，开始自动重新注册。")
+            do {
+                try await restart()
+            } catch {
+                warnings.append(error.localizedDescription)
+            }
         }
         return warnings
     }
@@ -315,6 +338,17 @@ final class ServiceController: @unchecked Sendable {
 
     func openBackgroundItemsSettings() {
         SMAppService.openSystemSettingsLoginItems()
+    }
+
+    func waitForTunnelProcess(timeout: TimeInterval = 10) async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: self.waitForStableLaunchdProcess(
+                    label: Self.tunnelLabel,
+                    timeout: timeout
+                ))
+            }
+        }
     }
 
     func isLoaded() -> Bool {
@@ -421,6 +455,25 @@ final class ServiceController: @unchecked Sendable {
     func openConfiguration() {
         try? FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
         NSWorkspace.shared.open(paths.appSupport)
+    }
+
+    func openRuntimeAnalytics(configuration: ServiceConfiguration?) {
+        guard let localMCPURL = configuration?.localMCPURL,
+              var components = URLComponents(url: localMCPURL, resolvingAgainstBaseURL: false),
+              components.scheme == "http",
+              isLoopbackHost(components.host) else {
+            return
+        }
+        components.path = "/analytics"
+        components.query = nil
+        components.fragment = nil
+        guard let analyticsURL = components.url else { return }
+        NSWorkspace.shared.open(analyticsURL)
+    }
+
+    private func isLoopbackHost(_ host: String?) -> Bool {
+        guard let normalized = host?.lowercased() else { return false }
+        return normalized == "localhost" || normalized == "127.0.0.1" || normalized == "::1"
     }
 
     private var coreService: SMAppService {
@@ -572,6 +625,43 @@ final class ServiceController: @unchecked Sendable {
             executable: "/bin/launchctl",
             arguments: ["print", "\(serviceDomain)/\(label)"]
         ).status) == 0
+    }
+
+    private func launchdProcessID(label: String) -> Int? {
+        guard let result = try? runProcess(
+            executable: "/bin/launchctl",
+            arguments: ["print", "\(serviceDomain)/\(label)"]
+        ), result.status == 0 else { return nil }
+        for rawLine in result.output.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("pid = "),
+                  let pid = Int(line.dropFirst("pid = ".count)),
+                  pid > 0 else { continue }
+            return pid
+        }
+        return nil
+    }
+
+    private func waitForStableLaunchdProcess(label: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        var previousPID: Int?
+        var stableChecks = 0
+        while Date() < deadline {
+            if let pid = launchdProcessID(label: label) {
+                if pid == previousPID {
+                    stableChecks += 1
+                } else {
+                    previousPID = pid
+                    stableChecks = 1
+                }
+                if stableChecks >= 4 { return true }
+            } else {
+                previousPID = nil
+                stableChecks = 0
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return false
     }
 
     private func waitUntilUnregistered(service: SMAppService, label: String, timeout: TimeInterval) -> Bool {

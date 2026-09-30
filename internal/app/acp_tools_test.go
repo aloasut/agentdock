@@ -76,14 +76,14 @@ func TestACPToolsAreFeatureGatedAndUseStrictSchemas(t *testing.T) {
 		t.Fatalf("acp_session actions = %#v, want %#v", actions, expectedActions)
 	}
 	sessionOutputProperties := testOutputSchema("acp_session")["properties"].(map[string]any)
-	for _, property := range []string{"profile_id", "context_policy", "event_policy", "interaction_policy", "steering_policy"} {
+	for _, property := range []string{"profile_id", "context_policy", "event_policy", "interaction_policy", "steering_policy", "change", "title"} {
 		if _, exists := sessionOutputProperties[property]; !exists {
 			t.Fatalf("acp_session output schema missing %s", property)
 		}
 	}
 
 	promptProperties := testOutputSchema("acp_prompt")["properties"].(map[string]any)
-	for _, property := range []string{"profile_id", "next_seq", "first_seq", "latest_seq", "dropped_count", "has_more", "truncated"} {
+	for _, property := range []string{"profile_id", "title", "next_seq", "first_seq", "latest_seq", "dropped_count", "has_more", "truncated"} {
 		if _, exists := promptProperties[property]; !exists {
 			t.Fatalf("acp_prompt output schema missing %s", property)
 		}

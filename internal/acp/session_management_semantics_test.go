@@ -90,7 +90,7 @@ func TestRemoteSessionIdentityIsIsolatedByProfileManager(t *testing.T) {
 	}
 	defer func() { _ = agy.Close() }()
 
-	remote := RemoteSession{RemoteSessionID: "shared-native-id", CWD: workspace}
+	remote := RemoteSession{RemoteSessionID: "shared-native-id", CWD: workspace, Title: "Shared native session"}
 	zcodeRecord, err := zcode.AttachRemoteSession(remote)
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +101,9 @@ func TestRemoteSessionIdentityIsIsolatedByProfileManager(t *testing.T) {
 	}
 	if zcodeRecord.ID == agyRecord.ID || zcodeRecord.Agent != "zcode" || agyRecord.Agent != "agy" {
 		t.Fatalf("cross-profile mappings collided: zcode=%#v agy=%#v", zcodeRecord, agyRecord)
+	}
+	if zcodeRecord.Title != remote.Title || agyRecord.Title != remote.Title {
+		t.Fatalf("remote title was not preserved: zcode=%q agy=%q", zcodeRecord.Title, agyRecord.Title)
 	}
 	if got, ok := zcode.ManagedSessionForRemote(remote.RemoteSessionID); !ok || got.ID != zcodeRecord.ID {
 		t.Fatalf("zcode remote mapping = %#v ok=%v", got, ok)

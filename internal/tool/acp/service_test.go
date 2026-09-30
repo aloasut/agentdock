@@ -9,6 +9,30 @@ import (
 	acpruntime "github.com/uvwt/agentdock/internal/acp"
 )
 
+func TestACPUpdateChangeValues(t *testing.T) {
+	mode := acpSettingChange("mode", "mode", "Mode", "review", "code")
+	if mode["before"] != "review" || mode["after"] != "code" {
+		t.Fatalf("mode change = %#v", mode)
+	}
+	if got := acpCurrentMode(map[string]any{"currentModeId": "review"}, "code"); got != "review" {
+		t.Fatalf("current mode = %q, want review", got)
+	}
+
+	label, value, found := acpConfigOption([]any{
+		map[string]any{"id": "safe", "name": "Safe mode", "currentValue": false},
+	}, "safe")
+	if !found || label != "Safe mode" || value != false {
+		t.Fatalf("config option = label %q value %#v found %v", label, value, found)
+	}
+
+	label, value, found = acpConfigOption([]any{
+		map[string]any{"option_id": "reasoning", "title": "Reasoning", "current_value": "high"},
+	}, "reasoning")
+	if !found || label != "Reasoning" || value != "high" {
+		t.Fatalf("snake-case config option = label %q value %#v found %v", label, value, found)
+	}
+}
+
 func TestMultiServiceRoutesDefaultAndExplicitProfiles(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {

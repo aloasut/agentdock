@@ -148,6 +148,59 @@ func TestRuntimeAPIStatusWithBearer(t *testing.T) {
 	}
 }
 
+func TestRuntimeAPIAnalyticsNoAuthRequiresDirectLoopback(t *testing.T) {
+	cfg := testConfig(t)
+	runtime, err := app.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	t.Cleanup(func() { _ = runtime.Close() })
+	handler := runtimeAPIHandler(runtime, cfg, auth.NewOAuthStore())
+
+	proxied := httptest.NewRequest(http.MethodGet, "/internal/runtime/analytics", nil)
+	proxied.RemoteAddr = "127.0.0.1:54321"
+	proxied.Host = "public.example"
+	proxied.Header.Set("CF-Ray", "abc")
+	proxyRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(proxyRecorder, proxied)
+	if proxyRecorder.Code != http.StatusForbidden {
+		t.Fatalf("proxied status = %d, want %d", proxyRecorder.Code, http.StatusForbidden)
+	}
+
+	local := httptest.NewRequest(http.MethodGet, "/internal/runtime/analytics", nil)
+	local.RemoteAddr = "127.0.0.1:54321"
+	local.Host = "127.0.0.1:27123"
+	localRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(localRecorder, local)
+	if localRecorder.Code != http.StatusOK {
+		t.Fatalf("local status = %d, want %d; body=%s", localRecorder.Code, http.StatusOK, localRecorder.Body.String())
+	}
+	if !strings.Contains(localRecorder.Body.String(), `"recent_capacity":500`) {
+		t.Fatalf("analytics response missing capacity: %s", localRecorder.Body.String())
+	}
+}
+
+func TestRuntimeAPIAnalyticsAllowsAuthenticatedRemote(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.AuthToken = "secret-token"
+	runtime, err := app.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	t.Cleanup(func() { _ = runtime.Close() })
+	handler := runtimeAPIHandler(runtime, cfg, auth.NewOAuthStore())
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/runtime/analytics", nil)
+	req.RemoteAddr = "198.51.100.10:443"
+	req.Host = "agentdock.example"
+	req.Header.Set("Authorization", "Bearer secret-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+}
+
 func TestRuntimeAPISkillsNoAuthWhenUnconfigured(t *testing.T) {
 	cfg := testConfig(t)
 	runtime, err := app.NewRuntime(cfg)
@@ -288,6 +341,7 @@ func TestRuntimeAPIMethodContract(t *testing.T) {
 		allow  string
 	}{
 		{method: http.MethodGet, path: "/internal/runtime/status", status: http.StatusOK},
+		{method: http.MethodGet, path: "/internal/runtime/diagnostics", status: http.StatusOK},
 		{method: http.MethodPost, path: "/internal/runtime/capabilities", status: http.StatusOK},
 		{method: http.MethodPost, path: "/internal/runtime/status", status: http.StatusMethodNotAllowed, allow: "GET"},
 		{method: http.MethodPost, path: "/internal/runtime/tasks/tsk_1234567890abcdef", status: http.StatusMethodNotAllowed, allow: "GET, DELETE"},

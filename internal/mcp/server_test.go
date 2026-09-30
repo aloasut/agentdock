@@ -12,6 +12,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/uvwt/agentdock/internal/app"
 	"github.com/uvwt/agentdock/internal/config"
+	"github.com/uvwt/agentdock/internal/observability"
 )
 
 func TestToolDescriptorsExposeSafetyAnnotations(t *testing.T) {
@@ -72,7 +73,7 @@ func TestFilePublishDescriptorExposesFileRewritePath(t *testing.T) {
 
 func TestOpenAIFileMetadataMatchesDeclaredSchemas(t *testing.T) {
 	for _, def := range app.ToolDefinitions() {
-		meta := toolMetadata(def, true)
+		meta := toolMetadata(def, config.MCPAppsModeFull)
 		inputProps, _ := def.InputSchema["properties"].(map[string]any)
 		for _, path := range def.FileArgRewritePaths {
 			property, ok := inputProps[path].(map[string]any)
@@ -227,6 +228,15 @@ func TestOfficialSDKServerListsAndCallsAgentDockTools(t *testing.T) {
 		t.Fatalf("CallTool() result = %#v", result)
 	}
 
+	analytics := runtime.RuntimeAnalytics()
+	recent, ok := analytics["recent_calls"].([]observability.ExecutionRecord)
+	if !ok || len(recent) == 0 {
+		t.Fatalf("runtime analytics recent_calls = %#v", analytics["recent_calls"])
+	}
+	if recent[0].Tool != "agentdock_context" || recent[0].Source != observability.SourceMCP || !recent[0].Success {
+		t.Fatalf("MCP tool analytics = %#v", recent[0])
+	}
+
 	if err := session.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -312,5 +322,5 @@ func toolDescriptorsForConfig(t *testing.T, names []string, cfg config.Config) [
 		}
 		definitions = append(definitions, definition)
 	}
-	return toolDescriptors(definitions, true)
+	return toolDescriptors(definitions, config.MCPAppsModeFull)
 }

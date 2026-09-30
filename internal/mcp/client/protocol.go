@@ -11,11 +11,13 @@ import (
 	"strings"
 	"sync"
 
+	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	sdkjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/envstore"
+	"github.com/uvwt/agentdock/internal/mcp/oauthclient"
 	processcontrol "github.com/uvwt/agentdock/internal/process"
 )
 
@@ -35,12 +37,13 @@ type sdkProtocolClient struct {
 	command    *exec.Cmd
 	controller *processcontrol.Controller
 	stderr     *tailBuffer
+	oauth      sdkauth.OAuthHandler
 	closeOnce  sync.Once
 	closeErr   error
 }
 
-func newStreamableHTTPClient(cfg ServerConfig) *sdkProtocolClient {
-	return &sdkProtocolClient{cfg: cfg}
+func newStreamableHTTPClient(cfg ServerConfig, oauth sdkauth.OAuthHandler) *sdkProtocolClient {
+	return &sdkProtocolClient{cfg: cfg, oauth: oauth}
 }
 
 func newStdioClient(cfg ServerConfig) *sdkProtocolClient {
@@ -78,9 +81,16 @@ func (c *sdkProtocolClient) transport() (mcpsdk.Transport, error) {
 		if err != nil {
 			return nil, err
 		}
+		oauth := c.oauth
+		if strings.TrimSpace(headers.Get("Authorization")) != "" {
+			// 显式 Authorization Header 始终优先于自动 OAuth；否则 SDK 即使拿到
+			// access token，也会在真正发请求前被静态 Header 覆盖。
+			oauth = nil
+		}
 		return &mcpsdk.StreamableClientTransport{
 			Endpoint:             c.cfg.URL,
 			HTTPClient:           &http.Client{Transport: headerRoundTripper{headers: headers}},
+			OAuthHandler:         oauth,
 			MaxRetries:           -1,
 			DisableStandaloneSSE: true,
 		}, nil
@@ -189,6 +199,10 @@ func (c *sdkProtocolClient) wrapSDKError(operation string, err error) error {
 		return nil
 	}
 	details := map[string]any{"server": c.cfg.Name}
+	var authRequired *oauthclient.AuthRequiredError
+	if errors.As(err, &authRequired) {
+		return newError("MCP_AUTH_REQUIRED", authRequired.Error(), false, details, err)
+	}
 	if c.stderr != nil && c.stderr.String() != "" {
 		details["stderr"] = c.stderr.String()
 	}
@@ -265,7 +279,7 @@ func stdioEnvironment(cfg ServerConfig) ([]string, error) {
 		value, ok := os.LookupEnv(hostName)
 		if !ok {
 			return nil, newError(
-				"MCP_AUTH_REQUIRED",
+				"MCP_CREDENTIAL_REQUIRED",
 				"required MCP stdio environment variable is missing",
 				false,
 				map[string]any{"server": cfg.Name, "env": hostName},
@@ -274,7 +288,11 @@ func stdioEnvironment(cfg ServerConfig) ([]string, error) {
 		}
 		environment[childName] = value
 	}
-	// 独立 MCP 环境文件属于该服务的明确配置，覆盖最小系统环境和 env_from_env 映射。
+	// portable Plugin mcp.json 中的 env 是包内公开默认值。用户的
+	// env/mcp/<storage-key>.env 以及宿主保留变量在 RuntimeEnv 中最后覆盖。
+	for key, value := range cfg.StaticEnv {
+		environment[key] = value
+	}
 	for key, value := range cfg.RuntimeEnv {
 		environment[key] = value
 	}
@@ -282,16 +300,30 @@ func stdioEnvironment(cfg ServerConfig) ([]string, error) {
 }
 
 func resolveHTTPHeaders(cfg ServerConfig) (http.Header, error) {
-	headers := make(http.Header, len(cfg.HeaderEnv)+1)
+	headers := make(http.Header, len(cfg.StaticHeaders)+len(cfg.HeaderEnv)+1)
+	for name, value := range cfg.StaticHeaders {
+		headers.Set(name, value)
+	}
 	headers.Set("User-Agent", config.ServerName+"/"+buildinfo.Version)
+	requiredEnv := make(map[string]struct{}, len(cfg.RequiredEnv))
+	for _, envName := range cfg.RequiredEnv {
+		requiredEnv[envName] = struct{}{}
+	}
 	for header, envName := range cfg.HeaderEnv {
 		value, ok := cfg.RuntimeEnv[envName]
-		if !ok {
+		if !ok && cfg.SourceType != "plugin" {
 			value, ok = os.LookupEnv(envName)
 		}
 		if !ok || value == "" {
+			if cfg.SourceType == "plugin" {
+				if _, required := requiredEnv[envName]; !required {
+					// optional HeaderEnv 缺失时不要发送空 Header。空 Authorization 会覆盖
+					// OAuthHandler 生成的 Bearer token，也会改变匿名服务的请求语义。
+					continue
+				}
+			}
 			return nil, newError(
-				"MCP_AUTH_REQUIRED",
+				"MCP_CREDENTIAL_REQUIRED",
 				"required MCP HTTP header environment variable is missing",
 				false,
 				map[string]any{"server": cfg.Name, "header": header, "env": envName},

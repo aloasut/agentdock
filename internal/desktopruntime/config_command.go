@@ -21,7 +21,7 @@ type ConfigUpdateRequest struct {
 	LogLevel                string
 	ListenMode              string
 	OAuthAccessTokenTTL     string
-	MCPAppsEnabled          bool
+	MCPAppsMode             agentconfig.MCPAppsMode
 	BrowserEnabled          bool
 	BrowserCDPURL           string
 	BrowserReuseExistingCDP bool
@@ -43,7 +43,7 @@ func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 		logLevel := flags.String("log-level", "info", "日志级别")
 		listen := flags.String("listen", "", "监听模式：loopback（仅本机）或 lan（局域网可达）；留空表示保留现有设置")
 		oauthAccessTokenTTL := flags.String("oauth-access-token-ttl", "", "OAuth Access Token 有效期；留空表示继承环境变量或使用默认值")
-		mcpAppsEnabled := flags.Bool("mcp-apps-enabled", true, "启用 MCP Apps UI")
+		mcpAppsMode := flags.String("mcp-apps-mode", "full", "聊天卡片模式：full、compact、off")
 		browserEnabled := flags.Bool("browser-enabled", false, "启用浏览器")
 		browserCDPURL := flags.String("browser-cdp-url", "", "已有 Chromium CDP 地址")
 		browserReuseExistingCDP := flags.Bool("browser-reuse-existing-cdp", false, "自动发现并复用唯一已有 CDP")
@@ -58,6 +58,10 @@ func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 		}
 		if flags.NArg() != 0 {
 			return configCommandUsageError()
+		}
+		parsedMCPAppsMode, err := agentconfig.ParseMCPAppsMode(*mcpAppsMode)
+		if err != nil {
+			return err
 		}
 		var acpProfiles []agentconfig.ACPProfile
 		if raw := strings.TrimSpace(*acpProfilesJSON); raw != "" {
@@ -84,7 +88,7 @@ func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 			LogLevel:                strings.ToLower(strings.TrimSpace(*logLevel)),
 			ListenMode:              strings.ToLower(strings.TrimSpace(*listen)),
 			OAuthAccessTokenTTL:     strings.TrimSpace(*oauthAccessTokenTTL),
-			MCPAppsEnabled:          *mcpAppsEnabled,
+			MCPAppsMode:             parsedMCPAppsMode,
 			BrowserEnabled:          *browserEnabled,
 			BrowserCDPURL:           strings.TrimSpace(*browserCDPURL),
 			BrowserReuseExistingCDP: *browserReuseExistingCDP,
@@ -98,7 +102,7 @@ func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 		if err := platformUpdateConfig(ctx, request); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintln(stdout, `{"updated":true}`)
+		_, err = fmt.Fprintln(stdout, `{"updated":true}`)
 		return err
 	default:
 		return configCommandUsageError()
@@ -122,6 +126,9 @@ func validateConfigUpdate(request ConfigUpdateRequest) error {
 	case "", "loopback", agentconfig.ListenHostLAN:
 	default:
 		return fmt.Errorf("不支持的监听模式: %s", request.ListenMode)
+	}
+	if _, err := agentconfig.ParseMCPAppsMode(string(request.MCPAppsMode)); err != nil {
+		return err
 	}
 	if request.OAuthAccessTokenTTL != "" {
 		if err := agentconfig.ValidateOAuthAccessTokenTTL(request.OAuthAccessTokenTTL); err != nil {

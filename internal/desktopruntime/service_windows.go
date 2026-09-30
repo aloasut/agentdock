@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
-)
 
-const windowsCoreStartTimeout = 45 * time.Second
+	processcontrol "github.com/uvwt/agentdock/internal/process"
+)
 
 func platformServiceStatus(ctx context.Context, runtimeRoot string) (ServiceStatus, error) {
 	manifest, _, err := loadDesktopManifest(runtimeRoot)
@@ -80,7 +80,7 @@ func startCore(ctx context.Context, manifest Manifest, runtimeRoot string) error
 	} else if err := startDetachedCore(manifest, runtimeRoot); err != nil {
 		return err
 	}
-	return waitForHealth(ctx, manifest.HealthURL(), windowsCoreStartTimeout)
+	return waitForHealth(ctx, manifest.HealthURL(), WindowsCoreStartTimeout)
 }
 
 func stopCore(ctx context.Context, manifest Manifest, runtimeRoot string) error {
@@ -93,12 +93,12 @@ func stopCore(ctx context.Context, manifest Manifest, runtimeRoot string) error 
 	for processID := range ancestorPIDs {
 		excluded[processID] = struct{}{}
 	}
-	supervisorPID, err := activeTunnelSupervisorPID(runtimeRoot, coreBinary)
+	supervisorPID, err := activeTunnelSupervisorPIDForRuntime(runtimeRoot, manifest)
 	if err != nil {
 		return fmt.Errorf("识别 Tunnel supervisor 失败: %w", err)
 	}
 	if supervisorPID != 0 {
-		// Core 与 Tunnel supervisor 共用 agentdock.exe。停止 Core 时必须保留 supervisor，
+		// Core 与 Tunnel supervisor 共用当前 generation Core 二进制。停止 Core 时必须保留 supervisor，
 		// 否则一次普通 Core 重启就会悄悄丢失 Tunnel 的后续自恢复能力。
 		excluded[supervisorPID] = struct{}{}
 	}
@@ -132,6 +132,7 @@ func startDetachedCore(manifest Manifest, runtimeRoot string) error {
 		HideWindow:    true,
 		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
 	}
+	processcontrol.Configure(command)
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("启动 AgentDock 核心失败: %w", err)
 	}

@@ -12,16 +12,36 @@ import (
 )
 
 type runtimeStub struct {
-	taskStatus string
-	taskLimit  int
-	mcpArgs    map[string]any
+	taskStatus    string
+	taskLimit     int
+	mcpArgs       map[string]any
+	skillTarget   string
+	skillFilePath string
+	pluginName    string
 }
 
-func (r *runtimeStub) RuntimeStatus() app.Result                           { return app.Result{"status": "ok"} }
-func (r *runtimeStub) RuntimeSkills() (app.Result, error)                  { return app.Result{}, nil }
-func (r *runtimeStub) RuntimeSkill(string) (app.Result, error)             { return app.Result{}, nil }
-func (r *runtimeStub) RuntimeSkillFiles(string) (app.Result, error)        { return app.Result{}, nil }
-func (r *runtimeStub) RuntimeSkillFile(string, string) (app.Result, error) { return app.Result{}, nil }
+func (r *runtimeStub) RuntimeStatus() app.Result          { return app.Result{"status": "ok"} }
+func (r *runtimeStub) RuntimeAnalytics() app.Result       { return app.Result{"total_calls": 7} }
+func (r *runtimeStub) RuntimeSkills() (app.Result, error) { return app.Result{}, nil }
+func (r *runtimeStub) RuntimeSkill(skill string) (app.Result, error) {
+	r.skillTarget = skill
+	return app.Result{}, nil
+}
+func (r *runtimeStub) RuntimeSkillFiles(skill string) (app.Result, error) {
+	r.skillTarget = skill
+	return app.Result{}, nil
+}
+func (r *runtimeStub) RuntimeSkillFile(skill, filePath string) (app.Result, error) {
+	r.skillTarget, r.skillFilePath = skill, filePath
+	return app.Result{}, nil
+}
+func (r *runtimeStub) RuntimePlugins(context.Context) (app.Result, error) {
+	return app.Result{"plugins": []any{}, "count": 0}, nil
+}
+func (r *runtimeStub) RuntimePlugin(_ context.Context, name string) (app.Result, error) {
+	r.pluginName = name
+	return app.Result{"name": name}, nil
+}
 func (r *runtimeStub) RuntimeTasks(status string, limit int) (app.Result, error) {
 	r.taskStatus, r.taskLimit = status, limit
 	return app.Result{"status": status, "limit": limit}, nil
@@ -45,6 +65,12 @@ func (r *runtimeStub) RuntimeEvolve(context.Context, map[string]any) (app.Result
 	return app.Result{}, nil
 }
 
+type diagnosticsRuntimeStub struct{ runtimeStub }
+
+func (r *diagnosticsRuntimeStub) RuntimeDiagnostics() app.Result {
+	return app.Result{"recent_calls": []any{"call"}}
+}
+
 func TestMethodContract(t *testing.T) {
 	tests := []struct {
 		method string
@@ -53,6 +79,8 @@ func TestMethodContract(t *testing.T) {
 		ok     bool
 	}{
 		{"GET", "/internal/runtime/status", "GET", true},
+		{"GET", "/internal/runtime/analytics", "GET", true},
+		{"GET", "/internal/runtime/diagnostics", "GET", true},
 		{"POST", "/internal/runtime/capabilities", "GET, POST", true},
 		{"DELETE", "/internal/runtime/tasks/task-1", "GET, DELETE", true},
 		{"POST", "/internal/runtime/tasks/task-1", "GET, DELETE", false},
@@ -67,6 +95,44 @@ func TestMethodContract(t *testing.T) {
 				t.Fatalf("AllowHeader() = %q, want %q", got, test.allow)
 			}
 		})
+	}
+}
+
+func TestDispatchAnalytics(t *testing.T) {
+	result, err := Dispatch(context.Background(), &runtimeStub{}, Request{
+		Method: "GET",
+		Path:   "/internal/runtime/analytics",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["total_calls"] != 7 {
+		t.Fatalf("analytics result = %#v", result)
+	}
+}
+
+func TestDispatchDiagnostics(t *testing.T) {
+	result, err := Dispatch(context.Background(), &diagnosticsRuntimeStub{}, Request{
+		Method: "GET",
+		Path:   "/internal/runtime/diagnostics",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, ok := result["recent_calls"].([]any)
+	if !ok || len(calls) != 1 || calls[0] != "call" {
+		t.Fatalf("diagnostics result = %#v", result)
+	}
+}
+
+func TestDispatchDiagnosticsRejectsUnsupportedRuntime(t *testing.T) {
+	_, err := Dispatch(context.Background(), &runtimeStub{}, Request{
+		Method: "GET",
+		Path:   "/internal/runtime/diagnostics",
+	})
+	var toolErr *app.ToolError
+	if !errors.As(err, &toolErr) || toolErr.Code != "DIAGNOSTICS_UNSUPPORTED" || toolErr.Category != "not_found" {
+		t.Fatalf("unsupported diagnostics error = %#v", err)
 	}
 }
 
@@ -85,6 +151,48 @@ func TestDispatchParsesTaskQuery(t *testing.T) {
 	}
 	if result["status"] != "active" || result["limit"] != 25 {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestDispatchSkillRefQueryUsesExactRuntimeReference(t *testing.T) {
+	runtime := &runtimeStub{}
+	ref := "skill://plugin/demo.plugin/plugin-skill"
+	_, err := Dispatch(context.Background(), runtime, Request{
+		Method: "GET",
+		Path:   "/internal/runtime/skills/plugin-skill/files/references/guide.md",
+		Query:  url.Values{"skill_ref": {ref}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.skillTarget != ref || runtime.skillFilePath != "references/guide.md" {
+		t.Fatalf("captured Skill target = %q file=%q", runtime.skillTarget, runtime.skillFilePath)
+	}
+
+	runtime = &runtimeStub{}
+	_, err = Dispatch(context.Background(), runtime, Request{
+		Method: "GET",
+		Path:   "/internal/runtime/skills/demo-skill",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.skillTarget != "demo-skill" {
+		t.Fatalf("legacy Skill target = %q", runtime.skillTarget)
+	}
+}
+
+func TestDispatchPluginRoutesAreReadOnly(t *testing.T) {
+	runtime := &runtimeStub{}
+	result, err := Dispatch(context.Background(), runtime, Request{Method: "GET", Path: "/internal/runtime/plugins/demo.plugin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.pluginName != "demo.plugin" || result["name"] != "demo.plugin" {
+		t.Fatalf("Plugin detail route = name %q result %#v", runtime.pluginName, result)
+	}
+	if MethodAllowed("POST", "/internal/runtime/plugins") {
+		t.Fatal("Plugin Runtime API must remain read-only")
 	}
 }
 

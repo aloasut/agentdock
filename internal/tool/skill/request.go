@@ -4,17 +4,10 @@ package skill
 type ManageRequest struct {
 	Action   string  `json:"action"`
 	Skill    string  `json:"skill,omitempty"`
+	SkillRef string  `json:"skill_ref,omitempty"`
 	Key      string  `json:"key,omitempty"`
 	Value    *string `json:"value,omitempty"`
 	Source   string  `json:"source,omitempty"`
 	Digest   string  `json:"digest,omitempty"`
 	Purge    bool    `json:"purge,omitempty"`
-	MaxBytes *int    `json:"max_bytes,omitempty"`
-}
-
-func intValue(value *int, fallback int) int {
-	if value == nil {
-		return fallback
-	}
-	return *value
 }

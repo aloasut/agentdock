@@ -61,21 +61,29 @@ license: Apache-2.0
 compatibility: Requires Python 3.11 or later.
 metadata:
   owner: example-team
-allowed-tools:
-  - exec_command
+allowed-tools: exec_command
 ---
 
 # Example Skill
 ```
 
-要求：
+AgentDock 真正依赖并严格校验的只有：
 
-- `name` 必填，匹配 `^[a-z][a-z0-9-]{1,62}$`；
-- `description` 必填，并能让模型稳定判断何时使用；
+- `name` 必填，长度 1–64，只允许小写 ASCII 字母、数字和 `-`，不能以 `-` 开头/结尾，也不能包含连续 `--`；
+- `description` 必填，最长 1024 个 Unicode 字符，并能让模型稳定判断何时使用；重要的 Use when、Do not use 和相邻 Skill 边界条件不要依赖正文补充，因为模型会先用 description 做候选路由；
 - Markdown 正文必须非空；
-- `license`、`compatibility`、`metadata`、`allowed-tools` 为可选；
-- `metadata.version` 若作者需要可以作为普通元数据存在，但 AgentDock 不把它当安装身份、升级依据或运行时版本；
+- 其他 frontmatter（包括 `license`、`compatibility`、`metadata`、`allowed-tools`、`version` 以及第三方扩展字段）由作者生态定义，AgentDock 原样保留但不作为安装/运行前提；
 - 不设计 AgentDock 私有的 `version`、`active_version`、revision 或 rollback 契约。
+
+## AgentDock 路由索引
+
+AgentDock 会先暴露轻量 description 索引，再按需读取完整 `SKILL.md`。不同来源的索引预算不同：
+
+- standalone managed 与 Plugin-owned Skill：`agentdock_context.skills` 返回 trim 后的完整 `description`；
+- workspace Skill：`workspace_context.workspace_skills` 返回 trim 后的完整 `description`，但最多列出 50 项；
+- shared/common Skill：`agentdock_context.common_skills` 面向数量不可控的 `~/.agents/skills`，最多列出 50 项，并把每项 `description` 限制在 120 bytes。
+
+因此 authoring 时应把 description 视为路由契约，而不是正文摘要的随意前缀。AgentDock 不提供可配置的 description 截断上限；如果未来 Skill 总量显著增长，应通过索引总预算或检索式路由解决，而不是静默裁掉每个已管理 Skill 的 description 后半段。
 
 ## 可移植核心
 
@@ -126,16 +134,18 @@ AgentDock 本地验证时：
 
 环境值不写入 AgentDock 主进程或系统全局环境。
 
-需要持久可变状态时，不要写 Skill 包目录。AgentDock 对 **managed** Skill 的 `exec_command` 会提供运行时保留变量 `SKILL_DATA_DIR`：
+需要持久可变状态时，不要写 Skill 包目录。AgentDock 对 **standalone managed** 与 **Plugin-owned** Skill 的 `exec_command` 都会提供独立运行时保留变量 `SKILL_DATA_DIR`：
 
-- 指向 `~/.agentdock/data/skills/<name>/` 对应的私有持久目录；
-- 目录只在 managed Skill 真正执行时创建；
+- standalone managed 指向 `~/.agentdock/data/skills/<name>/`；
+- Plugin-owned 指向 `~/.agentdock/data/skills/.plugin/<plugin>/<skill>/`，并额外获得 Plugin 共享兼容目录 `PLUGIN_DATA_DIR=~/.agentdock/data/plugins/<plugin>/`；
+- 数据目录只在对应 Skill / Plugin 运行时真正需要时创建；
 - Unix 权限收紧为 `0700`，Windows 使用当前用户私有 ACL；
 - Windows 原生命令收到 Host 路径；WSL 命令收到已转换的 Linux 路径；
-- `skill_manage env_set`、宿主 env mapping 和 `request.env` 都不能覆盖；
-- shared/workspace 同名候选不会得到 managed Skill 的 `SKILL_DATA_DIR`。
+- `skill_manage env_set`、宿主 env mapping 和 `request.env` 都不能覆盖运行时保留变量；
+- Plugin-owned Skill 的用户环境隔离在 `~/.agentdock/env/skill/plugin/<plugin>/<skill>.env`；standalone 仍使用 `~/.agentdock/env/skill/<name>.env`；
+- shared/workspace 候选不会得到 `SKILL_DATA_DIR` 或 `PLUGIN_DATA_DIR`。
 
-`SKILL_DATA_DIR` 是 AgentDock 可选适配，不是 Agent Skills 通用前提。可移植 Skill 不应把它列为用户必填配置；需要状态目录的辅助脚本可以在检测到它时优先使用，并在其他宿主下采用自己明确声明的可移植策略。
+`SKILL_DATA_DIR` / `PLUGIN_DATA_DIR` 是 AgentDock 可选适配，不是 Agent Skills 通用前提。可移植 Skill 不应把它们列为用户必填配置；需要状态目录的辅助脚本可以在检测到它们时优先使用，并在其他宿主下采用自己明确声明的可移植策略。
 
 ## 引用与辅助脚本
 

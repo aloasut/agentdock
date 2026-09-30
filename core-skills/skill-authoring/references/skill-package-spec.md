@@ -6,7 +6,7 @@
 
 ```text
 宿主发现候选 Skill 与来源
-→ 返回 name / description / source_type / source_id / skill_ref / file
+→ 返回 name / description / source_type / skill_ref / file
 → 模型选择一个精确候选
 → read_file 读取宿主返回的 file
 → 模型理解流程和约束
@@ -48,24 +48,23 @@ description: 清楚说明何时使用、解决什么问题
 # Example Skill
 ```
 
-可选 Agent Skills 字段：
+第三方或 Agent Skills frontmatter 可以继续存在，例如：
 
 ```yaml
 license: Apache-2.0
 compatibility: Requires Python 3.11 or later.
 metadata:
   owner: example-team
-allowed-tools:
-  - exec_command
+allowed-tools: exec_command
 ```
 
-规则：
+AgentDock Core 只对自己真正依赖的字段做约束：
 
-- `name` 匹配 `^[a-z][a-z0-9-]{1,62}$`；
+- `name` 长度 1–64，只允许小写 ASCII 字母、数字和 `-`，不能以 `-` 开头/结尾，也不能包含连续 `--`；
 - 目录身份与 `name` 一致；
-- `description` 非空；
+- `description` 非空且最长 1024 个字符；
 - Markdown 正文非空；
-- `metadata.version` 若存在只是普通作者元数据；
+- 其他 frontmatter 字段不进入 AgentDock 强类型运行契约；它们会随原始 `SKILL.md` 保留，即使字段形状来自第三方规范；
 - AgentDock 不读取任何 version 字段来选择安装内容，也不存在 active version。
 
 ## 4. 内容身份
@@ -112,21 +111,29 @@ AgentDock 适配说明必须可独立删除而不破坏核心流程。
 
 Skill 包只声明环境变量名称、类型、必填性、用途和缺失行为，不保存真实值。
 
-AgentDock managed Skill 环境：
+AgentDock standalone managed Skill 环境与持久数据：
 
 ```text
 ~/.agentdock/env/skill/<name>.env
-```
-
-持久数据：
-
-```text
 ~/.agentdock/data/skills/<name>/
 ```
 
-managed Skill 通过 `exec_command` 运行时，AgentDock 把这个目录作为保留环境变量 `SKILL_DATA_DIR` 注入子进程。目录按私有权限创建；Windows 原生命令得到 Host 路径，WSL 得到转换后的 Linux 路径。`SKILL_DATA_DIR` 不能由 Skill 环境、宿主变量映射或请求级 `env` 覆盖。
+Plugin-owned Skill 使用独立组件环境与数据：
 
-`SKILL_DATA_DIR` 只属于 managed 候选。shared/workspace 同名 Skill 不继承 managed 环境或数据目录。
+```text
+~/.agentdock/env/skill/plugin/<plugin>/<skill>.env
+~/.agentdock/data/skills/.plugin/<plugin>/<skill>/
+```
+
+Plugin-owned Skill 另外可获得 Plugin 共享兼容目录：
+
+```text
+PLUGIN_DATA_DIR=~/.agentdock/data/plugins/<plugin>/
+```
+
+standalone managed 与 Plugin-owned Skill 通过 `exec_command` 运行时，AgentDock 都把各自独立组件目录作为保留变量 `SKILL_DATA_DIR` 注入子进程。Plugin-owned Skill 另外注入 `PLUGIN_DATA_DIR`。目录按私有权限创建；Windows 原生命令得到 Host 路径，WSL 得到转换后的 Linux 路径。这两个运行时变量都不能由 Skill 环境、宿主变量映射或请求级 `env` 覆盖。
+
+shared/workspace 候选不会得到 `SKILL_DATA_DIR` 或 `PLUGIN_DATA_DIR`。
 
 环境和数据均独立于包内容。普通更新、remove 不删除；只有显式 purge 才删除。目标 Skill 不应硬编码 `~/.agentdock/data/...`，而应把 `SKILL_DATA_DIR` 作为 AgentDock 可选适配。
 

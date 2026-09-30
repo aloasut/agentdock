@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/uvwt/agentdock/internal/app"
+	"github.com/uvwt/agentdock/internal/mcp/oauthclient"
 )
 
 // MethodAllowed 返回指定 Runtime API 路径允许当前方法与否。
@@ -24,7 +25,7 @@ func MethodAllowed(method, path string) bool {
 		_, ok := runtimeTaskID(cleanPath)
 		return ok
 	}
-	return method == http.MethodPost && (cleanPath == "/internal/runtime/capabilities" || cleanPath == "/internal/runtime/mcp" || cleanPath == "/internal/runtime/evolve")
+	return method == http.MethodPost && (cleanPath == "/internal/runtime/capabilities" || cleanPath == "/internal/runtime/mcp" || cleanPath == "/internal/runtime/mcp/oauth/callback" || cleanPath == "/internal/runtime/evolve")
 }
 
 func AllowHeader(path string) string {
@@ -35,7 +36,7 @@ func AllowHeader(path string) string {
 	if cleanPath == "/internal/runtime/capabilities" || cleanPath == "/internal/runtime/mcp" {
 		return "GET, POST"
 	}
-	if cleanPath == "/internal/runtime/evolve" {
+	if cleanPath == "/internal/runtime/evolve" || cleanPath == "/internal/runtime/mcp/oauth/callback" {
 		return "POST"
 	}
 	return "GET"
@@ -53,6 +54,16 @@ func Dispatch(ctx context.Context, runtime Runtime, request Request) (map[string
 	switch {
 	case path == "/internal/runtime/status":
 		return map[string]any(runtime.RuntimeStatus()), nil
+	case path == "/internal/runtime/analytics":
+		return map[string]any(runtime.RuntimeAnalytics()), nil
+	case path == "/internal/runtime/diagnostics":
+		diagnostics, ok := runtime.(DiagnosticsRuntime)
+		if !ok {
+			return nil, &app.ToolError{
+				Code: "DIAGNOSTICS_UNSUPPORTED", Message: "runtime does not support diagnostics", Category: "not_found",
+			}
+		}
+		return map[string]any(diagnostics.RuntimeDiagnostics()), nil
 	case path == "/internal/runtime/capabilities":
 		refresh := strings.EqualFold(request.queryValue("refresh"), "true") || method == http.MethodPost
 		result, err := runtime.RuntimeCapabilities(ctx, refresh)
@@ -65,19 +76,33 @@ func Dispatch(ctx context.Context, runtime Runtime, request Request) (map[string
 		if !ok {
 			return nil, &app.ToolError{Code: "NOT_FOUND", Message: "runtime Skill API route not found", Category: "not_found"}
 		}
+		target := skill
+		if exact := strings.TrimSpace(request.queryValue("skill_ref")); exact != "" {
+			target = exact
+		}
 		switch action {
 		case "detail":
-			result, err := runtime.RuntimeSkill(skill)
+			result, err := runtime.RuntimeSkill(target)
 			return map[string]any(result), err
 		case "files":
-			result, err := runtime.RuntimeSkillFiles(skill)
+			result, err := runtime.RuntimeSkillFiles(target)
 			return map[string]any(result), err
 		case "file":
-			result, err := runtime.RuntimeSkillFile(skill, filePath)
+			result, err := runtime.RuntimeSkillFile(target, filePath)
 			return map[string]any(result), err
 		default:
 			return nil, &app.ToolError{Code: "NOT_FOUND", Message: "runtime Skill API route not found", Category: "not_found"}
 		}
+	case path == "/internal/runtime/plugins":
+		result, err := runtime.RuntimePlugins(ctx)
+		return map[string]any(result), err
+	case strings.HasPrefix(path, "/internal/runtime/plugins/"):
+		name, ok := runtimePluginName(path)
+		if !ok {
+			return nil, &app.ToolError{Code: "PLUGIN_NAME_REQUIRED", Message: "Plugin name is required", Category: "validation"}
+		}
+		result, err := runtime.RuntimePlugin(ctx, name)
+		return map[string]any(result), err
 	case path == "/internal/runtime/evolve" && method == http.MethodPost:
 		args, err := decodeRuntimeEvolutionRequest(request.Body)
 		if err != nil {
@@ -85,6 +110,19 @@ func Dispatch(ctx context.Context, runtime Runtime, request Request) (map[string
 		}
 		result, err := runtime.RuntimeEvolve(ctx, args)
 		return map[string]any(result), err
+	case path == "/internal/runtime/mcp/oauth/callback" && method == http.MethodPost:
+		oauthRuntime, ok := runtime.(MCPOAuthRuntime)
+		if !ok {
+			return nil, &app.ToolError{Code: "MCP_AUTH_UNSUPPORTED", Message: "runtime does not support Remote MCP OAuth", Category: "not_found"}
+		}
+		callback, err := decodeMCPOAuthCallback(request.Body)
+		if err != nil {
+			return nil, err
+		}
+		if err := oauthRuntime.RuntimeMCPOAuthCallback(ctx, callback); err != nil {
+			return nil, err
+		}
+		return map[string]any{"accepted": true}, nil
 	case path == "/internal/runtime/mcp" && method == http.MethodPost:
 		args, err := decodeRuntimeMCPRequest(request.Body)
 		if err != nil {
@@ -135,11 +173,13 @@ type runtimeMCPRequest struct {
 	TimeoutMS   int               `json:"timeout_ms"`
 	Key         string            `json:"key"`
 	Value       *string           `json:"value"`
+	CallbackID  string            `json:"callback_id"`
 }
 
 var runtimeMCPManageActions = map[string]bool{
 	"add": true, "remove": true, "enable": true, "disable": true,
 	"env_set": true, "env_unset": true, "env_list": true, "refresh": true,
+	"authorize": true, "auth_clear": true,
 }
 
 func decodeRuntimeMCPRequest(body []byte) (map[string]any, error) {
@@ -205,7 +245,38 @@ func decodeRuntimeMCPRequest(body []byte) (map[string]any, error) {
 	if request.TimeoutMS > 0 {
 		args["timeout_ms"] = request.TimeoutMS
 	}
+	if request.CallbackID != "" {
+		args["callback_id"] = request.CallbackID
+	}
 	return args, nil
+}
+
+func decodeMCPOAuthCallback(body []byte) (oauthclient.CallbackResult, error) {
+	if len(body) > 16*1024 {
+		return oauthclient.CallbackResult{}, &app.ToolError{Code: "INVALID_MCP_AUTH_CALLBACK", Message: "OAuth callback body is too large", Category: "validation"}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	var callback oauthclient.CallbackResult
+	if err := decoder.Decode(&callback); err != nil {
+		return oauthclient.CallbackResult{}, &app.ToolError{Code: "INVALID_MCP_AUTH_CALLBACK", Message: "invalid OAuth callback body", Category: "validation"}
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return oauthclient.CallbackResult{}, &app.ToolError{Code: "INVALID_MCP_AUTH_CALLBACK", Message: "OAuth callback body must contain exactly one JSON value", Category: "validation"}
+	}
+	callback.State = strings.TrimSpace(callback.State)
+	callback.Code = strings.TrimSpace(callback.Code)
+	callback.Issuer = strings.TrimSpace(callback.Issuer)
+	callback.Error = strings.TrimSpace(callback.Error)
+	callback.ErrorDescription = strings.TrimSpace(callback.ErrorDescription)
+	if callback.State == "" {
+		return oauthclient.CallbackResult{}, &app.ToolError{Code: "INVALID_MCP_AUTH_CALLBACK", Message: "OAuth callback state is required", Category: "validation"}
+	}
+	if callback.Code == "" && callback.Error == "" {
+		return oauthclient.CallbackResult{}, &app.ToolError{Code: "INVALID_MCP_AUTH_CALLBACK", Message: "OAuth callback must contain code or error", Category: "validation"}
+	}
+	return callback, nil
 }
 
 func runtimeMCPRequestError(message string) error {
@@ -237,6 +308,18 @@ func runtimeSkillRoute(path string) (skill, filePath, action string, ok bool) {
 	default:
 		return "", "", "", false
 	}
+}
+
+func runtimePluginName(path string) (string, bool) {
+	const prefix = "/internal/runtime/plugins/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+	name := strings.TrimSpace(strings.TrimPrefix(path, prefix))
+	if name == "" || strings.Contains(name, "/") {
+		return "", false
+	}
+	return name, true
 }
 
 func runtimeMCPName(path string) (string, bool) {

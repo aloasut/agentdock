@@ -9,13 +9,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
 
 	sdkjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/uvwt/agentdock-protocol/mcpapps"
 	"github.com/uvwt/agentdock/internal/app"
 	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/config"
+	"github.com/uvwt/agentdock/internal/observability"
 )
 
 type Server struct {
@@ -89,7 +90,7 @@ func (s *Server) ToolDescriptors() []map[string]any {
 	if s == nil || s.runtime == nil {
 		return nil
 	}
-	return toolDescriptors(s.runtime.ToolDefinitions(), s.cfg.MCPAppsEnabled)
+	return toolDescriptors(s.runtime.ToolDefinitions(), s.cfg.MCPAppsMode)
 }
 
 func (s *Server) Invoke(ctx context.Context, name string, arguments map[string]any) (map[string]any, error) {
@@ -115,7 +116,7 @@ func (s *Server) ServeStdio(in io.Reader, out io.Writer) error {
 }
 
 func (s *Server) registerTool(def ToolDefinition) {
-	meta := toolMetadata(def, s.cfg.MCPAppsEnabled)
+	meta := toolMetadata(def, s.cfg.MCPAppsMode)
 	tool := &mcpsdk.Tool{
 		Name:         def.Name,
 		Title:        def.Title,
@@ -143,21 +144,16 @@ func (s *Server) registerTool(def ToolDefinition) {
 }
 
 func (s *Server) callTool(ctx context.Context, name string, request *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-	started := time.Now()
 	arguments := map[string]any{}
 	if request != nil && request.Params != nil && len(request.Params.Arguments) > 0 && string(request.Params.Arguments) != "null" {
 		if err := json.Unmarshal(request.Params.Arguments, &arguments); err != nil {
-			slog.Warn("tool params invalid", "tool", name, "duration_ms", time.Since(started).Milliseconds())
+			// 原始 JSON 尚未进入 Runtime，属于 MCP 协议层错误；不记录请求正文或解析错误内容。
+			slog.Warn("mcp tool params invalid", "tool", name)
 			return nil, &sdkjsonrpc.Error{Code: sdkjsonrpc.CodeInvalidParams, Message: "tool arguments must be a JSON object"}
 		}
 	}
-	slog.Info("tool started", "tool", name)
+	ctx = observability.WithSource(ctx, observability.SourceMCP)
 	result, err := s.runtime.Call(ctx, name, arguments)
-	finishedAttrs := []any{"tool", name, "duration_ms", time.Since(started).Milliseconds(), "ok", err == nil}
-	if err != nil {
-		finishedAttrs = append(finishedAttrs, "error", err)
-	}
-	slog.Info("tool finished", finishedAttrs...)
 
 	encoded, encodeErr := json.Marshal(toolEnvelope(name, result, err))
 	if encodeErr != nil {
@@ -168,17 +164,33 @@ func (s *Server) callTool(ctx context.Context, name string, request *mcpsdk.Call
 		return nil, fmt.Errorf("decode MCP tool result: %w", decodeErr)
 	}
 	if def, ok := s.runtime.ToolDefinition(name); ok {
-		if meta := toolResultMetadata(def, arguments, s.cfg.MCPAppsEnabled); len(meta) > 0 {
+		if meta := toolResultMetadata(def, arguments, s.cfg.MCPAppsMode); len(meta) > 0 {
 			response.Meta = meta
+		}
+		if name == "view_image" && !response.IsError {
+			meta := toolMetadata(def, s.cfg.MCPAppsMode)
+			if meta["ui"] != nil {
+				for _, content := range response.Content {
+					if _, ok := content.(*mcpsdk.ImageContent); ok {
+						// 只有当前模式实际启用 Image 卡片时才追加宿主确认提示；
+						// 原图字节和结构化协议始终保持不变。
+						response.Meta = mcpsdk.Meta(meta)
+						response.Content = append(response.Content, &mcpsdk.TextContent{Text: mcpapps.ImageResultText})
+						break
+					}
+				}
+			}
 		}
 	}
 	return &response, nil
 }
 
-func toolMetadata(def ToolDefinition, mcpAppsEnabled bool) map[string]any {
+func toolMetadata(def ToolDefinition, mode config.MCPAppsMode) map[string]any {
 	meta := map[string]any{}
-	if mcpAppsEnabled && def.UIBinding != nil && def.UIBinding.Action == "" {
-		meta["ui"] = map[string]any{"resourceUri": def.UIBinding.ResourceURI}
+	if def.UIBinding != nil {
+		if trigger, enabled := def.UIBinding.Trigger(mode); enabled && trigger.Action == "" {
+			meta["ui"] = map[string]any{"resourceUri": def.UIBinding.ResourceURI}
+		}
 	}
 	if len(def.FileArgRewritePaths) > 0 {
 		paths := append([]string(nil), def.FileArgRewritePaths...)
@@ -196,12 +208,16 @@ func toolMetadata(def ToolDefinition, mcpAppsEnabled bool) map[string]any {
 
 // Action-scoped Apps UI lives on the call result rather than the tool descriptor,
 // so unrelated actions on the same action-based tool do not render a widget.
-func toolResultMetadata(def ToolDefinition, arguments map[string]any, mcpAppsEnabled bool) mcpsdk.Meta {
-	if !mcpAppsEnabled || def.UIBinding == nil || def.UIBinding.Action == "" {
+func toolResultMetadata(def ToolDefinition, arguments map[string]any, mode config.MCPAppsMode) mcpsdk.Meta {
+	if def.UIBinding == nil {
+		return nil
+	}
+	trigger, enabled := def.UIBinding.Trigger(mode)
+	if !enabled || trigger.Action == "" {
 		return nil
 	}
 	action, _ := arguments["action"].(string)
-	if action != def.UIBinding.Action {
+	if action != trigger.Action {
 		return nil
 	}
 	return mcpsdk.Meta{"ui": map[string]any{"resourceUri": def.UIBinding.ResourceURI}}
@@ -223,7 +239,7 @@ type writeCloser struct{ io.Writer }
 
 func (writeCloser) Close() error { return nil }
 
-func toolDescriptors(definitions []ToolDefinition, mcpAppsEnabled bool) []map[string]any {
+func toolDescriptors(definitions []ToolDefinition, mode config.MCPAppsMode) []map[string]any {
 	descriptors := make([]map[string]any, 0, len(definitions))
 	for _, def := range definitions {
 		descriptor := map[string]any{
@@ -240,7 +256,7 @@ func toolDescriptors(definitions []ToolDefinition, mcpAppsEnabled bool) []map[st
 				"openWorldHint": def.Annotations.OpenWorldHint,
 			}
 		}
-		meta := toolMetadata(def, mcpAppsEnabled)
+		meta := toolMetadata(def, mode)
 		if paths, ok := meta["file_arg_rewrite_paths"].([]string); ok {
 			descriptor["file_arg_rewrite_paths"] = paths
 		}

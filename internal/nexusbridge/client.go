@@ -19,6 +19,7 @@ import (
 	protocol "github.com/uvwt/agentdock-protocol"
 	"github.com/uvwt/agentdock/internal/app"
 	"github.com/uvwt/agentdock/internal/buildinfo"
+	"github.com/uvwt/agentdock/internal/observability"
 	"github.com/uvwt/agentdock/internal/publicartifacts"
 	"github.com/uvwt/agentdock/internal/runtimeapi"
 )
@@ -135,6 +136,18 @@ func (c *Client) connect(ctx context.Context) error {
 	if ready.Type != protocol.MessageNodeReady || ready.ProtocolVersion != protocol.ConnectionProtocolVersion {
 		return errors.New("NexusDock 返回了不兼容的节点协议")
 	}
+	if oauthRuntime, ok := c.runtime.(runtimeapi.NexusOAuthCallbackRuntime); ok {
+		if err := oauthRuntime.SetNexusOAuthCallback(ready.PublicURL, c.identity.NodeID); err != nil {
+			// Nexus 公网 URL 只影响“通过 Nexus 授权”这个可选路径，不能让 Recall、
+			// Runtime 管理等整条节点 Bridge 因一项回调配置失效。
+			slog.Warn("NexusDock OAuth callback unavailable", "error", err)
+		}
+		defer func() {
+			if err := oauthRuntime.SetNexusOAuthCallback("", c.identity.NodeID); err != nil {
+				slog.Warn("clear NexusDock OAuth callback failed", "error", err)
+			}
+		}()
+	}
 	c.state.SetConnected(true)
 	defer c.state.SetConnected(false)
 	slog.Info("NexusDock node connected", "node_id", c.identity.NodeID, "endpoint", c.identity.Endpoint)
@@ -181,6 +194,7 @@ func bridgeHello(identity Identity, tools []string, descriptors []protocol.ToolD
 
 func (c *Client) invoke(parent context.Context, socket *websocket.Conn, incoming protocol.Message) {
 	ctx, cancel := context.WithCancel(parent)
+	ctx = extractBridgeTraceContext(ctx, &incoming)
 	c.cancelMu.Lock()
 	c.cancels[incoming.RequestID] = cancel
 	c.cancelMu.Unlock()
@@ -222,7 +236,8 @@ func (c *Client) invoke(parent context.Context, socket *websocket.Conn, incoming
 		if decodeErr := json.Unmarshal(incoming.Arguments, &request); decodeErr != nil {
 			err = fmt.Errorf("解析工具请求: %w", decodeErr)
 		} else {
-			result, err = c.node.Invoke(ctx, request.Tool, request.Arguments)
+			toolCtx := observability.WithSource(ctx, observability.SourceNexus)
+			result, err = c.node.Invoke(toolCtx, request.Tool, request.Arguments)
 		}
 	case protocol.OperationResourceRead:
 		var request struct {

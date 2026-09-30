@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/uvwt/agentdock/internal/desktopruntime"
+	processcontrol "github.com/uvwt/agentdock/internal/process"
 )
 
 var windowsDesktopStagedFiles = []string{
@@ -79,7 +80,7 @@ func applyWindowsDesktopOnlyUpdate(ctx context.Context, request applyRequest) (a
 		if taskWasRunning {
 			if restartErr := desktopruntime.StartInteractiveScheduledTask(ctx, runtimeRoot, taskName); restartErr != nil {
 				failures = append(failures, "重新启动旧核心计划任务失败: "+restartErr.Error())
-			} else if waitErr := waitForVersion(ctx, []string{manifest.HealthURL()}, request.CurrentVersion, 30*time.Second); waitErr != nil {
+			} else if waitErr := waitForVersion(ctx, []string{manifest.HealthURL()}, request.CurrentVersion, desktopruntime.WindowsCoreStartTimeout); waitErr != nil {
 				failures = append(failures, "旧核心健康检查失败: "+waitErr.Error())
 			}
 		}
@@ -118,7 +119,7 @@ func applyWindowsDesktopOnlyUpdate(ctx context.Context, request applyRequest) (a
 		if err := desktopruntime.StartInteractiveScheduledTask(ctx, runtimeRoot, taskName); err != nil {
 			return applyResult{}, rollback(fmt.Errorf("重新启动 Windows 管理员核心计划任务失败: %w", err))
 		}
-		if err := waitForVersion(ctx, []string{manifest.HealthURL()}, request.TargetVersion, 30*time.Second); err != nil {
+		if err := waitForVersion(ctx, []string{manifest.HealthURL()}, request.TargetVersion, desktopruntime.WindowsCoreStartTimeout); err != nil {
 			return applyResult{}, rollback(fmt.Errorf("Windows 管理员核心健康检查失败: %w", err))
 		}
 	}
@@ -302,6 +303,7 @@ func (update *windowsDesktopUpdate) RestartTray(ctx context.Context) error {
 	}
 	command := exec.Command(update.trayPath, "--background")
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS}
+	processcontrol.Configure(command)
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("重新启动 Windows 控制面板失败: %w", err)
 	}

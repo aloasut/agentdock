@@ -19,9 +19,13 @@ import (
 func registerRuntimeAPI(mux *http.ServeMux, runtime runtimeapi.Runtime, cfg config.Config, oauthStore *auth.OAuthStore) {
 	h := runtimeAPIHandler(runtime, cfg, oauthStore)
 	mux.HandleFunc("/internal/runtime/status", h)
+	mux.HandleFunc("/internal/runtime/analytics", h)
+	mux.HandleFunc("/internal/runtime/diagnostics", h)
 	mux.HandleFunc("/internal/runtime/capabilities", h)
 	mux.HandleFunc("/internal/runtime/skills", h)
 	mux.HandleFunc("/internal/runtime/skills/", h)
+	mux.HandleFunc("/internal/runtime/plugins", h)
+	mux.HandleFunc("/internal/runtime/plugins/", h)
 	mux.HandleFunc("/internal/runtime/tasks", h)
 	mux.HandleFunc("/internal/runtime/tasks/", h)
 	mux.HandleFunc("/internal/runtime/evolve", h)
@@ -40,6 +44,11 @@ func runtimeAPIHandler(runtime runtimeapi.Runtime, cfg config.Config, oauthStore
 		}
 		staticOK := cfg.AuthToken != "" && authorizer.Authorized(r)
 		oauthOK := authorizedOAuth(r, cfg, oauthStore)
+		if strings.TrimSuffix(r.URL.Path, "/") == "/internal/runtime/analytics" &&
+			!authRequired && !isDirectLoopbackRequest(r) {
+			writeRuntimeAPIError(w, http.StatusForbidden, "LOCAL_ACCESS_REQUIRED", "runtime analytics requires local access or authentication")
+			return
+		}
 		if authRequired && !staticOK && !oauthOK {
 			setBearerChallenge(w, cfg, r, strings.TrimSpace(r.Header.Get("Authorization")) != "")
 			writeRuntimeAPIError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
@@ -69,7 +78,7 @@ func runtimeAPIHandler(runtime runtimeapi.Runtime, cfg config.Config, oauthStore
 
 func runtimeRequestBody(r *http.Request) ([]byte, error) {
 	cleanPath := strings.TrimSuffix(r.URL.Path, "/")
-	if r.Method != http.MethodPost || (cleanPath != "/internal/runtime/mcp" && cleanPath != "/internal/runtime/evolve") {
+	if r.Method != http.MethodPost || (cleanPath != "/internal/runtime/mcp" && cleanPath != "/internal/runtime/mcp/oauth/callback" && cleanPath != "/internal/runtime/evolve") {
 		return nil, nil
 	}
 	return io.ReadAll(io.LimitReader(r.Body, 64*1024+1))

@@ -75,23 +75,20 @@ func (svc *Service) newHostCommandInvocation(ctx context.Context, request ExecRe
 	if !info.IsDir() {
 		return commandInvocation{}, toolError("NOT_A_DIRECTORY", "workdir is not a directory", "validation")
 	}
-	runtimeEnv := map[string]string(nil)
-	expectedDataDir := ""
-	if lease.EnvName != "" {
-		expectedDataDir, err = config.SkillDataDir(svc.config(), lease.EnvName)
-		if err != nil {
-			return commandInvocation{}, toolErrorDetails("SKILL_DATA_DIR_INVALID", "resolve managed Skill data directory", "runtime", map[string]any{
-				"skill": lease.EnvName, "reason": err.Error(),
-			})
+	runtimeEnv := cloneRuntimeEnv(lease.RuntimeEnv)
+	expectedDataDir := strings.TrimSpace(lease.SkillDataDir)
+	if expectedDataDir != "" {
+		if runtimeEnv == nil {
+			runtimeEnv = map[string]string{}
 		}
-		runtimeEnv = map[string]string{config.SkillDataDirEnvKey: expectedDataDir}
+		runtimeEnv[config.SkillDataDirEnvKey] = expectedDataDir
 	}
-	commandEnv, err := svc.commandEnvWithRuntime(lease.EnvName, request.Env, runtimeEnv)
+	commandEnv, err := svc.commandEnvWithRuntimeScope(lease.EnvScope, request.Env, runtimeEnv)
 	if err != nil {
 		return commandInvocation{}, err
 	}
 	if expectedDataDir != "" {
-		if _, err := svc.ensureManagedSkillDataDir(lease.EnvName); err != nil {
+		if _, err := svc.ensureSkillDataDirPath(expectedDataDir, lease.Name); err != nil {
 			return commandInvocation{}, err
 		}
 	}
@@ -120,15 +117,23 @@ func (svc *Service) resolveHostCommandWorkdir(requested, skillDir string) (strin
 }
 
 func (svc *Service) commandEnvOverrides(skillName string, extra map[string]string) (map[string]string, error) {
-	overrides := map[string]string{}
+	var scope *envstore.Scope
 	if skillName != "" {
-		values, err := svc.envs.Load(envstore.Scope{Kind: envstore.ScopeSkill, Name: skillName})
+		scope = &envstore.Scope{Kind: envstore.ScopeSkill, Name: skillName}
+	}
+	return svc.commandEnvOverridesScope(scope, extra)
+}
+
+func (svc *Service) commandEnvOverridesScope(scope *envstore.Scope, extra map[string]string) (map[string]string, error) {
+	overrides := map[string]string{}
+	if scope != nil {
+		values, err := svc.envs.Load(*scope)
 		if err != nil {
-			return nil, toolErrorDetails("SKILL_ENV_INVALID", "load Skill environment", "validation", map[string]any{"skill": skillName, "reason": err.Error()})
+			return nil, toolErrorDetails("SKILL_ENV_INVALID", "load Skill environment", "validation", map[string]any{"skill": scope.Name, "reason": err.Error()})
 		}
 		for key, value := range values {
-			if config.IsReservedSkillEnvironmentKey(key) {
-				return nil, toolErrorDetails("SKILL_ENV_INVALID", reservedSkillEnvironmentError(key).Error(), "validation", map[string]any{"skill": skillName, "key": key})
+			if config.IsReservedCommandEnvironmentKey(key) {
+				return nil, toolErrorDetails("SKILL_ENV_INVALID", reservedSkillEnvironmentError(key).Error(), "validation", map[string]any{"skill": scope.Name, "key": key})
 			}
 			setPlatformCommandEnv(overrides, key, value)
 		}
@@ -137,7 +142,7 @@ func (svc *Service) commandEnvOverrides(skillName string, extra map[string]strin
 		if err := envstore.ValidateKey(key); err != nil {
 			return nil, toolErrorDetails("INVALID_ENV_NAME", err.Error(), "validation", map[string]any{"key": key})
 		}
-		if config.IsReservedSkillEnvironmentKey(key) {
+		if config.IsReservedCommandEnvironmentKey(key) {
 			return nil, toolErrorDetails("INVALID_ENV_NAME", reservedSkillEnvironmentError(key).Error(), "validation", map[string]any{"key": key})
 		}
 		setPlatformCommandEnv(overrides, key, value)

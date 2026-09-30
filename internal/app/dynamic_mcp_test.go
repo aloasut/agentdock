@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/uvwt/agentdock/internal/config"
+	"github.com/uvwt/agentdock/internal/observability"
 )
 
 func TestDynamicMCPToolsStaySeparateAndAppearLightweightInContext(t *testing.T) {
@@ -59,6 +60,14 @@ func TestDynamicMCPToolsStaySeparateAndAppearLightweightInContext(t *testing.T) 
 			})
 		case "tools/call":
 			arguments, _ := rpc.Params["arguments"].(map[string]any)
+			if arguments["text"] == "fail" {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      rpc.ID,
+					"error":   map[string]any{"code": -32000, "message": "synthetic failure"},
+				})
+				return
+			}
 			writeDynamicMCPRPCResult(t, w, rpc.ID, map[string]any{
 				"content":           []map[string]any{{"type": "text", "text": arguments["text"]}},
 				"structuredContent": map[string]any{"echo": arguments["text"]},
@@ -125,6 +134,31 @@ func TestDynamicMCPToolsStaySeparateAndAppearLightweightInContext(t *testing.T) 
 		}
 	}
 
+	coldCall, err := runtime.Call(context.Background(), "mcp_tool_call", map[string]any{
+		"name":      "demo:echo",
+		"arguments": map[string]any{"text": "cold"},
+	})
+	if err != nil {
+		t.Fatalf("cold mcp_tool_call: %v", err)
+	}
+	coldRemote, _ := coldCall["result"].(map[string]any)
+	coldStructured, _ := coldRemote["structuredContent"].(map[string]any)
+	if coldStructured["echo"] != "cold" {
+		t.Fatalf("unexpected cold call result: %#v", coldCall)
+	}
+	coldRecord := runtime.observer.Snapshot().RecentCalls[0]
+	if coldRecord.Tool != "mcp_tool_call" || len(coldRecord.Stages) != 2 {
+		t.Fatalf("cold MCP analytics = %#v", coldRecord)
+	}
+	if coldRecord.Stages[0].Name != observability.StageMCPRefresh || coldRecord.Stages[1].Name != observability.StageMCPRemoteCall {
+		t.Fatalf("cold MCP stage order = %#v", coldRecord.Stages)
+	}
+	for _, stage := range coldRecord.Stages {
+		if !stage.Success {
+			t.Fatalf("cold MCP stage failed: %#v", stage)
+		}
+	}
+
 	search, err := runtime.Call(context.Background(), "mcp_tool_search", map[string]any{
 		"server": "demo",
 		"query":  "echo text",
@@ -175,6 +209,23 @@ func TestDynamicMCPToolsStaySeparateAndAppearLightweightInContext(t *testing.T) 
 		t.Fatalf("unexpected call result: %#v", called)
 	}
 	assertToolResultMatchestestOutputSchema(t, "mcp_tool_call", called)
+	warmRecord := runtime.observer.Snapshot().RecentCalls[0]
+	if len(warmRecord.Stages) != 1 || warmRecord.Stages[0].Name != observability.StageMCPRemoteCall {
+		t.Fatalf("warm MCP stages = %#v, want only remote call", warmRecord.Stages)
+	}
+
+	if _, err := runtime.Call(context.Background(), "mcp_tool_call", map[string]any{
+		"name":      "demo:echo",
+		"arguments": map[string]any{"text": "fail"},
+	}); err == nil {
+		t.Fatal("mcp_tool_call synthetic failure unexpectedly succeeded")
+	}
+	failedRecord := runtime.observer.Snapshot().RecentCalls[0]
+	if len(failedRecord.Stages) != 1 ||
+		failedRecord.Stages[0].Name != observability.StageMCPRemoteCall ||
+		failedRecord.Stages[0].Success {
+		t.Fatalf("failed MCP stages = %#v, want remote call success=false", failedRecord.Stages)
+	}
 
 	for _, name := range runtime.ToolNames() {
 		if name == "demo:echo" {
@@ -217,7 +268,7 @@ func TestAgentDockContextReportsDynamicMCPRefreshErrorCode(t *testing.T) {
 		t.Fatalf("dynamic MCP context = %#v", contextData.DynamicMCP)
 	}
 	item := contextData.DynamicMCP[0]
-	if item.Name != "broken" || item.Status != "error" || item.ToolCount != 0 || item.LastErrorCode != "MCP_AUTH_REQUIRED" {
+	if item.Name != "broken" || item.Status != "error" || item.ToolCount != 0 || item.LastErrorCode != "MCP_CREDENTIAL_REQUIRED" {
 		t.Fatalf("broken dynamic MCP context = %#v", item)
 	}
 }

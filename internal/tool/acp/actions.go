@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"time"
 
@@ -105,6 +106,7 @@ func (s *Service) Session(ctx context.Context, request SessionRequest) (response
 			if err != nil {
 				return nil, acpToolError(err)
 			}
+			enrichSessionTitle(ctx, manager, &session)
 			result["session"] = session
 			projection, projectionErr := manager.SessionProjection(session.ID)
 			if projectionErr == nil {
@@ -139,6 +141,7 @@ func (s *Service) Session(ctx context.Context, request SessionRequest) (response
 		if err != nil {
 			return nil, acpToolError(err)
 		}
+		enrichSessionTitle(ctx, manager, &result.Session)
 		response := sessionActionResult(action, result)
 		response["attached"] = attached
 		return response, nil
@@ -147,38 +150,81 @@ func (s *Service) Session(ctx context.Context, request SessionRequest) (response
 		if strings.TrimSpace(request.SessionID) == "" {
 			return nil, validationError("ACP_SESSION_TARGET_REQUIRED", "session_id is required for update", nil)
 		}
-		hasMode := strings.TrimSpace(request.ModeID) != ""
-		hasConfig := strings.TrimSpace(request.ConfigID) != ""
+		modeID := strings.TrimSpace(request.ModeID)
+		configID := strings.TrimSpace(request.ConfigID)
+		hasMode := modeID != ""
+		hasConfig := configID != ""
 		if hasMode == hasConfig {
 			return nil, validationError("ACP_SESSION_UPDATE_INVALID", "provide exactly one of mode_id or config_id for update", nil)
 		}
-		result := Result{"action": action}
-		if hasMode {
-			if err := manager.SetSessionMode(ctx, request.SessionID, request.ModeID); err != nil {
-				return nil, acpToolError(err)
-			}
-		} else {
-			options, err := manager.SetSessionConfigOption(ctx, request.SessionID, request.ConfigID, request.ConfigValue)
-			if err != nil {
-				return nil, acpToolError(err)
-			}
-			result["config_options"] = options
-		}
-		session, err := manager.InspectSession(request.SessionID)
+		current, err := manager.EnsureSessionActive(ctx, request.SessionID)
 		if err != nil {
 			return nil, acpToolError(err)
 		}
-		result["session"] = session
-		result["changed"] = true
-		return result, nil
+		if hasMode {
+			before := acpCurrentMode(current.Modes, current.Session.ModeID)
+			if err := manager.SetSessionMode(ctx, request.SessionID, modeID); err != nil {
+				return nil, acpToolError(err)
+			}
+			updated, err := manager.EnsureSessionActive(ctx, request.SessionID)
+			if err != nil {
+				return nil, acpToolError(err)
+			}
+			enrichSessionTitle(ctx, manager, &updated.Session)
+			result := sessionActionResult(action, updated)
+			after := acpCurrentMode(updated.Modes, updated.Session.ModeID)
+			result["change"] = acpSettingChange("mode", "mode", "Mode", before, after)
+			if before != "" && after != "" {
+				result["changed"] = before != after
+			}
+			return result, nil
+		} else {
+			label, before, beforeFound := acpConfigOption(current.ConfigOptions, configID)
+			if _, err := manager.SetSessionConfigOption(ctx, request.SessionID, configID, request.ConfigValue); err != nil {
+				return nil, acpToolError(err)
+			}
+			updated, err := manager.EnsureSessionActive(ctx, request.SessionID)
+			if err != nil {
+				return nil, acpToolError(err)
+			}
+			enrichSessionTitle(ctx, manager, &updated.Session)
+			result := sessionActionResult(action, updated)
+			afterLabel, after, afterFound := acpConfigOption(updated.ConfigOptions, configID)
+			if afterLabel != "" {
+				label = afterLabel
+			}
+			if label == "" {
+				label = configID
+			}
+			change := acpSettingChange("config_option", configID, label, before, after)
+			if !beforeFound {
+				delete(change, "before")
+			}
+			if !afterFound {
+				change["after"] = request.ConfigValue
+			}
+			result["change"] = change
+			if beforeFound && afterFound {
+				result["changed"] = !reflect.DeepEqual(before, after)
+			}
+			return result, nil
+		}
 
 	case "close":
 		if strings.TrimSpace(request.SessionID) == "" {
 			return nil, validationError("ACP_SESSION_TARGET_REQUIRED", "session_id is required for close", nil)
 		}
+		before, err := manager.InspectSession(request.SessionID)
+		if err != nil {
+			return nil, acpToolError(err)
+		}
+		enrichSessionTitle(ctx, manager, &before)
 		session, err := manager.CloseSession(ctx, request.SessionID)
 		if err != nil {
 			return nil, acpToolError(err)
+		}
+		if session.Title == "" {
+			session.Title = before.Title
 		}
 		return Result{"action": action, "session": session}, nil
 
@@ -186,19 +232,108 @@ func (s *Service) Session(ctx context.Context, request SessionRequest) (response
 		if err := requireOneSessionTarget(request.SessionID, request.RemoteSessionID); err != nil {
 			return nil, err
 		}
+		title := ""
 		if strings.TrimSpace(request.SessionID) != "" {
+			session, inspectErr := manager.InspectSession(request.SessionID)
+			if inspectErr != nil {
+				return nil, acpToolError(inspectErr)
+			}
+			enrichSessionTitle(ctx, manager, &session)
+			title = session.Title
 			err = manager.DeleteSession(ctx, request.SessionID)
 		} else {
+			if remote, findErr := manager.FindRemoteSession(ctx, request.RemoteSessionID); findErr == nil {
+				title = strings.TrimSpace(remote.Title)
+			}
 			err = manager.DeleteRemoteSession(ctx, request.RemoteSessionID)
 		}
 		if err != nil {
 			return nil, acpToolError(err)
 		}
-		return Result{"action": action, "deleted": true}, nil
+		result := Result{"action": action, "deleted": true}
+		if title != "" {
+			result["title"] = title
+		}
+		return result, nil
 
 	default:
 		return nil, validationError("ACP_ACTION_INVALID", "unsupported ACP session action", map[string]any{"action": action})
 	}
+}
+
+func enrichSessionTitle(ctx context.Context, manager *acpruntime.Manager, session *acpruntime.SessionRecord) {
+	if session == nil || strings.TrimSpace(session.Title) != "" || strings.TrimSpace(session.RemoteSessionID) == "" {
+		return
+	}
+	remote, err := manager.FindRemoteSession(ctx, session.RemoteSessionID)
+	if err != nil {
+		return
+	}
+	session.Title = strings.TrimSpace(remote.Title)
+}
+
+func acpSettingChange(field, id, label string, before, after any) map[string]any {
+	return map[string]any{
+		"field":  field,
+		"id":     id,
+		"label":  label,
+		"before": before,
+		"after":  after,
+	}
+}
+
+func acpCurrentMode(modes any, fallback string) string {
+	if state, ok := modes.(map[string]any); ok {
+		if modeID, _ := state["currentModeId"].(string); strings.TrimSpace(modeID) != "" {
+			return strings.TrimSpace(modeID)
+		}
+		if modeID, _ := state["current_mode_id"].(string); strings.TrimSpace(modeID) != "" {
+			return strings.TrimSpace(modeID)
+		}
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func acpConfigOption(options any, configID string) (string, any, bool) {
+	read := func(option map[string]any) (string, any, bool) {
+		id, _ := option["id"].(string)
+		if id == "" {
+			id, _ = option["optionId"].(string)
+		}
+		if id == "" {
+			id, _ = option["option_id"].(string)
+		}
+		if id != configID {
+			return "", nil, false
+		}
+		label, _ := option["name"].(string)
+		if label == "" {
+			label, _ = option["title"].(string)
+		}
+		value, exists := option["currentValue"]
+		if !exists {
+			value, exists = option["current_value"]
+		}
+		return label, value, exists
+	}
+
+	switch typed := options.(type) {
+	case []any:
+		for _, raw := range typed {
+			if option, ok := raw.(map[string]any); ok {
+				if label, value, found := read(option); found {
+					return label, value, true
+				}
+			}
+		}
+	case []map[string]any:
+		for _, option := range typed {
+			if label, value, found := read(option); found {
+				return label, value, true
+			}
+		}
+	}
+	return "", nil, false
 }
 
 func sessionActionResult(action string, result acpruntime.SessionResult) Result {
@@ -233,10 +368,14 @@ func (s *Service) Prompt(ctx context.Context, request PromptRequest) (response R
 		if err != nil {
 			return nil, acpToolError(err)
 		}
-		return Result{
+		response := Result{
 			"action": action, "run_id": result.RunID, "session_id": result.SessionID,
 			"status": result.Status, "disposition": result.Disposition, "started_at": result.StartedAt,
-		}, nil
+		}
+		if title := localSessionTitle(manager, result.SessionID); title != "" {
+			response["title"] = title
+		}
+		return response, nil
 	case "events":
 		after := intValue(request.AfterSeq, 0)
 		if after < 0 {
@@ -265,6 +404,9 @@ func (s *Service) Prompt(ctx context.Context, request PromptRequest) (response R
 		if result.EndedAt != nil {
 			response["ended_at"] = result.EndedAt
 		}
+		if title := localSessionTitle(manager, result.SessionID); title != "" {
+			response["title"] = title
+		}
 		return response, nil
 	case "cancel":
 		sessionID := request.SessionID
@@ -275,10 +417,25 @@ func (s *Service) Prompt(ctx context.Context, request PromptRequest) (response R
 		if err := manager.CancelPrompt(ctx, sessionID, runID); err != nil {
 			return nil, acpToolError(err)
 		}
-		return Result{"action": action, "session_id": sessionID, "run_id": runID, "cancel_requested": true}, nil
+		response := Result{"action": action, "session_id": sessionID, "run_id": runID, "cancel_requested": true}
+		if title := localSessionTitle(manager, sessionID); title != "" {
+			response["title"] = title
+		}
+		return response, nil
 	default:
 		return nil, validationError("ACP_ACTION_INVALID", "unsupported ACP prompt action", map[string]any{"action": action})
 	}
+}
+
+func localSessionTitle(manager *acpruntime.Manager, sessionID string) string {
+	if manager == nil || strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	session, err := manager.InspectSession(sessionID)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(session.Title)
 }
 
 func (s *Service) Interaction(_ context.Context, request InteractionRequest) (response Result, returnErr error) {

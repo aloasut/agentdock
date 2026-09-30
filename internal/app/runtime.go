@@ -14,6 +14,8 @@ import (
 	"github.com/uvwt/agentdock/internal/envstore"
 	"github.com/uvwt/agentdock/internal/evolution"
 	mcpclient "github.com/uvwt/agentdock/internal/mcp/client"
+	"github.com/uvwt/agentdock/internal/observability"
+	pluginruntime "github.com/uvwt/agentdock/internal/plugin"
 	"github.com/uvwt/agentdock/internal/taskstate"
 	toolacp "github.com/uvwt/agentdock/internal/tool/acp"
 	toolbrowser "github.com/uvwt/agentdock/internal/tool/browser"
@@ -23,6 +25,7 @@ import (
 	toolfile "github.com/uvwt/agentdock/internal/tool/file"
 	toolmcp "github.com/uvwt/agentdock/internal/tool/mcp"
 	toolmedia "github.com/uvwt/agentdock/internal/tool/media"
+	toolplugin "github.com/uvwt/agentdock/internal/tool/plugin"
 	toolrecall "github.com/uvwt/agentdock/internal/tool/recall"
 	toolskill "github.com/uvwt/agentdock/internal/tool/skill"
 	tooltask "github.com/uvwt/agentdock/internal/tool/task"
@@ -40,12 +43,15 @@ type Runtime struct {
 	command        *toolcommand.Service
 	files          *toolfile.Service
 	dynamicMCP     *toolmcp.Service
+	plugins        *toolplugin.Service
 	media          *toolmedia.Service
 	browser        *toolbrowser.Service
 	recall         *toolrecall.Service
 	evolution      *evolution.Service
 	taskTools      *tooltask.Service
 	acp            *toolacp.Service
+	observer       *observability.Recorder
+	tracing        *observability.Tracing
 	lifecycleMu    sync.RWMutex
 	commandCtx     context.Context
 	commandCancel  context.CancelFunc
@@ -67,7 +73,11 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	skills, err := toolskill.New(cfg, ws, envs)
+	pluginManager, err := pluginruntime.NewManager(cfg.AgentDockHome)
+	if err != nil {
+		return nil, err
+	}
+	skills, err := toolskill.New(cfg, ws, envs, pluginManager)
 	if err != nil {
 		return nil, err
 	}
@@ -84,6 +94,7 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 	runtime := &Runtime{
 		cfg: cfg, ws: ws, skills: skills,
 		toolNames: toolNames, toolValidators: toolValidators,
+		observer:   observability.NewRecorder(observability.DefaultRecentCapacity),
 		commandCtx: commandCtx, commandCancel: commandCancel,
 	}
 	runtime.command = toolcommand.New(func() config.Config { return runtime.cfg }, ws, envs, func(ctx context.Context, skillRef string) (toolcommand.SkillLease, error) {
@@ -91,14 +102,51 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 		if err != nil {
 			return toolcommand.SkillLease{}, err
 		}
-		envName := ""
-		if resolved.SourceType == "managed" {
-			envName = resolved.Name
+		var envScope *envstore.Scope
+		skillDataDir := ""
+		runtimeEnv := map[string]string(nil)
+		switch resolved.SourceType {
+		case "managed":
+			scope := envstore.Scope{Kind: envstore.ScopeSkill, Name: resolved.Name}
+			envScope = &scope
+			skillDataDir, err = config.SkillDataDir(cfg, resolved.Name)
+			if err != nil {
+				release()
+				return toolcommand.SkillLease{}, fmt.Errorf("resolve managed Skill data directory: %w", err)
+			}
+		case "plugin":
+			scope := envstore.Scope{Kind: envstore.ScopePluginSkill, Plugin: resolved.PluginName, Name: resolved.Name}
+			envScope = &scope
+			skillDataDir, err = config.PluginSkillDataDir(cfg, resolved.PluginName, resolved.Name)
+			if err != nil {
+				release()
+				return toolcommand.SkillLease{}, fmt.Errorf("resolve Plugin Skill data directory: %w", err)
+			}
+			pluginDataDir, dataErr := pluginManager.EnsureDataDir(resolved.PluginName)
+			if dataErr != nil {
+				release()
+				return toolcommand.SkillLease{}, fmt.Errorf("prepare Plugin data directory: %w", dataErr)
+			}
+			runtimeEnv = map[string]string{config.PluginDataDirEnvKey: pluginDataDir}
 		}
-		return toolcommand.SkillLease{Name: resolved.Name, Root: resolved.Root, EnvName: envName, Release: release}, nil
+		return toolcommand.SkillLease{
+			Name: resolved.Name, Root: resolved.Root, EnvScope: envScope,
+			SkillDataDir: skillDataDir, RuntimeEnv: runtimeEnv, Release: release,
+		}, nil
 	}, runtime.commandExecutionContext)
 	runtime.files = toolfile.New(ws, skills.ResolveResource, runtime.command.CommandEnv)
 	runtime.dynamicMCP = toolmcp.New(mcpClients, envs)
+	if err := runtime.configureMCPOAuthCallbacks(); err != nil {
+		_ = runtime.dynamicMCP.Close()
+		commandCancel()
+		return nil, err
+	}
+	runtime.plugins = toolplugin.New(cfg, pluginManager, mcpClients, envs, ws)
+	if err := runtime.plugins.ReconcileMCP(); err != nil {
+		_ = runtime.dynamicMCP.Close()
+		commandCancel()
+		return nil, fmt.Errorf("initialize Plugin MCP runtime: %w", err)
+	}
 	runtime.media = toolmedia.New(cfg, ws, runtime.command.InternalCommandEnv)
 	runtime.browser = toolbrowser.New(
 		toolbrowser.Config{AgentDockHome: cfg.AgentDockHome, ExecutablePath: cfg.BrowserExecutablePath, CDPURL: cfg.BrowserCDPURL, ReuseExistingCDP: cfg.BrowserReuseExistingCDP},
@@ -107,6 +155,8 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 	runtime.recall = toolrecall.New(func() config.Config { return runtime.cfg })
 	runtime.evolution = evolution.New(func() config.Config { return runtime.cfg }, tasks)
 	runtime.taskTools = tooltask.New(func() config.Config { return runtime.cfg }, tasks, runtime.evolution)
+	runtime.tracing = observability.NewTracing(nil)
+
 	if cfg.ACPEnabled {
 		managers := make(map[string]*acpruntime.Manager)
 		for _, profile := range cfg.EffectiveACPProfiles() {
@@ -187,6 +237,9 @@ func (r *Runtime) Close() error {
 				closeErrors = append(closeErrors, fmt.Errorf("close dynamic MCP clients: %w", err))
 			}
 		}
+		if r.plugins != nil {
+			r.plugins.ReleaseMCPLeases()
+		}
 		r.closeErr = errors.Join(closeErrors...)
 	})
 	return r.closeErr
@@ -221,18 +274,32 @@ func (r *Runtime) ToolDefinition(name string) (ToolDefinition, bool) {
 	return toolDefinitionForConfig(name, r.cfg)
 }
 
-func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (Result, error) {
+func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (result Result, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	startedAt := time.Now()
+	r.observer.BeginTool()
+	source := observability.SourceFromContext(ctx)
+	parentCtx := ctx
+	ctx, span := r.tracing.StartTool(ctx, source)
+	defer span.End()
+	ctx = observability.WithExecution(ctx, startedAt)
+	defer r.observeToolCall(parentCtx, ctx, name, startedAt, &err)
+
 	if args == nil {
 		args = map[string]any{}
 	}
-	if err := r.validateToolArguments(name, args); err != nil {
+	if err = r.validateToolArguments(name, args); err != nil {
 		return nil, err
 	}
 	spec, ok := toolSpecByName(name)
 	if !ok || spec.Handler == nil {
-		return nil, toolErrorDetails("UNKNOWN_TOOL", "tool has no handler", "validation", map[string]any{"tool": name})
+		err = toolErrorDetails("UNKNOWN_TOOL", "tool has no handler", "validation", map[string]any{"tool": name})
+		return nil, err
 	}
-	return spec.Handler(ctx, r, args)
+	result, err = spec.Handler(ctx, r, args)
+	return result, err
 }
 
 func (r *Runtime) validateToolArguments(name string, args map[string]any) error {

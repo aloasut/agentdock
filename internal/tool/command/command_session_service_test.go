@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/uvwt/agentdock/internal/observability"
 	"github.com/uvwt/agentdock/internal/tool/command/session"
 )
 
@@ -112,6 +113,126 @@ func TestExecCommandAsyncReturnsSessionImmediately(t *testing.T) {
 	}
 	if _, err := runtime.killSessionArgs(map[string]any{"session_id": sessionID}); err != nil {
 		t.Fatalf("killSession() error = %v", err)
+	}
+}
+
+func TestExecCommandRecordsStartAndForegroundWaitStages(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test command uses POSIX shell syntax")
+	}
+	service, _ := newCommandTestService(t)
+	ctx := observability.WithExecution(context.Background(), time.Now())
+	result, err := service.execArgs(ctx, map[string]any{
+		"cmd":            "sleep 0.02",
+		"execution_mode": "sync",
+		"timeout_ms":     2000,
+	})
+	if err != nil {
+		t.Fatalf("execCommand() error = %v", err)
+	}
+	if result["status"] != "exited" {
+		t.Fatalf("sync result = %#v", result)
+	}
+
+	stages := observability.CloseExecution(ctx)
+	if len(stages) != 2 {
+		t.Fatalf("stages = %#v, want start + foreground wait", stages)
+	}
+	if stages[0].Name != observability.StageCommandStart || stages[1].Name != observability.StageCommandForegroundWait {
+		t.Fatalf("stage order = %#v", stages)
+	}
+	if !stages[0].Success || !stages[1].Success || stages[1].DurationMS <= 0 {
+		t.Fatalf("stage status/duration = %#v", stages)
+	}
+}
+
+func TestExecCommandAutoYieldRecordsForegroundWaitStage(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test command uses POSIX sleep")
+	}
+	service, _ := newCommandTestService(t)
+	ctx := observability.WithExecution(context.Background(), time.Now())
+	result, err := service.execArgs(ctx, map[string]any{
+		"cmd":            "sleep 1",
+		"execution_mode": "auto",
+		"yield_time_ms":  20,
+		"timeout_ms":     5000,
+	})
+	if err != nil {
+		t.Fatalf("execCommand() error = %v", err)
+	}
+	if result["status"] != "running" {
+		t.Fatalf("auto yield result = %#v, want running", result)
+	}
+	stages := observability.CloseExecution(ctx)
+	if len(stages) != 2 ||
+		stages[0].Name != observability.StageCommandStart ||
+		stages[1].Name != observability.StageCommandForegroundWait ||
+		!stages[1].Success {
+		t.Fatalf("auto stages = %#v, want successful foreground wait", stages)
+	}
+	sessionID, _ := result["session_id"].(string)
+	if sessionID != "" {
+		if _, err := service.killSessionArgs(map[string]any{"session_id": sessionID}); err != nil {
+			t.Fatalf("killSession() error = %v", err)
+		}
+	}
+}
+
+func TestExecCommandCancelledForegroundWaitIsUnsuccessful(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test command uses POSIX sleep")
+	}
+	service, _ := newCommandTestService(t)
+	base, cancel := context.WithCancel(context.Background())
+	ctx := observability.WithExecution(base, time.Now())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	result, err := service.execArgs(ctx, map[string]any{
+		"cmd":            "sleep 1",
+		"execution_mode": "sync",
+		"timeout_ms":     5000,
+	})
+	if err != nil {
+		t.Fatalf("execCommand() error = %v", err)
+	}
+	stages := observability.CloseExecution(ctx)
+	if len(stages) != 2 || stages[1].Name != observability.StageCommandForegroundWait || stages[1].Success {
+		t.Fatalf("cancelled stages = %#v, want foreground wait success=false", stages)
+	}
+	sessionID, _ := result["session_id"].(string)
+	if sessionID != "" {
+		if _, err := service.killSessionArgs(map[string]any{"session_id": sessionID}); err != nil {
+			t.Fatalf("killSession() error = %v", err)
+		}
+	}
+}
+
+func TestExecCommandAsyncOnlyRecordsStartStage(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test command uses POSIX sleep")
+	}
+	service, _ := newCommandTestService(t)
+	ctx := observability.WithExecution(context.Background(), time.Now())
+	result, err := service.execArgs(ctx, map[string]any{
+		"cmd":            "sleep 10",
+		"execution_mode": "async",
+		"timeout_ms":     20000,
+	})
+	if err != nil {
+		t.Fatalf("execCommand() error = %v", err)
+	}
+	stages := observability.CloseExecution(ctx)
+	if len(stages) != 1 || stages[0].Name != observability.StageCommandStart {
+		t.Fatalf("async stages = %#v, want only command.start", stages)
+	}
+	sessionID, _ := result["session_id"].(string)
+	if sessionID != "" {
+		if _, err := service.killSessionArgs(map[string]any{"session_id": sessionID}); err != nil {
+			t.Fatalf("killSession() error = %v", err)
+		}
 	}
 }
 

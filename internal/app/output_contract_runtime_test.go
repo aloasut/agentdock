@@ -234,31 +234,7 @@ func TestRuntimeOutputContractACPInfoNormalizesOmittedInitializeFields(t *testin
 }
 
 func TestRuntimeOutputContractACPOptionalFields(t *testing.T) {
-	const helperEnv = "GO_WANT_OUTPUT_CONTRACT_ACP_HELPER"
-	t.Setenv(helperEnv, "1")
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	cfg := config.Config{
-		AgentDockHome:       filepath.Join(root, ".agentdock"),
-		AgentDockDefaultDir: root,
-		ACPEnabled:          true,
-		ACPProfiles: []config.ACPProfile{{
-			ID: "output-contract-helper", Kind: "custom", Command: executable,
-			Args:       []string{"-test.run=^TestOutputContractACPHelper$"},
-			EnvFromEnv: map[string]string{helperEnv: helperEnv}, Enabled: true,
-		}},
-		ACPDefaultProfile: "output-contract-helper",
-	}
-	if err := cfg.Normalize(); err != nil {
-		t.Fatal(err)
-	}
-	runtime, err := NewRuntime(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	runtime := newOutputContractACPRuntime(t, false)
 	defer func() { _ = runtime.Close() }()
 
 	info, err := runtime.Call(context.Background(), "acp_session", map[string]any{"action": "info"})
@@ -327,6 +303,10 @@ func TestRuntimeOutputContractACPOptionalFields(t *testing.T) {
 	if !ok || len(configOptions) != 0 {
 		t.Fatalf("update config_options = %#v, want []", normalizedConfigured["config_options"])
 	}
+	change, ok := normalizedConfigured["change"].(map[string]any)
+	if !ok || change["field"] != "config_option" || change["id"] != "safe" || change["after"] != false {
+		t.Fatalf("update change = %#v", normalizedConfigured["change"])
+	}
 
 	started, err := runtime.Call(context.Background(), "acp_prompt", map[string]any{
 		"action": "start", "session_id": session.ID,
@@ -370,6 +350,104 @@ func TestRuntimeOutputContractACPOptionalFields(t *testing.T) {
 	if !ok || endedAt == "" {
 		t.Fatalf("settled prompt ended_at = %#v, want RFC3339 string", normalizedSettled["ended_at"])
 	}
+}
+
+func TestRuntimeOutputContractACPUpdateChange(t *testing.T) {
+	runtime := newOutputContractACPRuntime(t, true)
+	defer func() { _ = runtime.Close() }()
+
+	created, err := runtime.Call(context.Background(), "acp_session", map[string]any{"action": "new"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, ok := created["session"].(acpruntime.SessionRecord)
+	if !ok || session.ID == "" {
+		t.Fatalf("created session = %#v", created["session"])
+	}
+
+	configured, err := runtime.Call(context.Background(), "acp_session", map[string]any{
+		"action": "update", "session_id": session.ID, "config_id": "safe", "config_value": false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalizedConfigured := assertToolResultMatchestestOutputSchema(t, "acp_session", configured)
+	change, ok := normalizedConfigured["change"].(map[string]any)
+	if !ok || change["field"] != "config_option" || change["id"] != "safe" || change["label"] != "Safe" || change["before"] != true || change["after"] != false {
+		t.Fatalf("config update change = %#v", normalizedConfigured["change"])
+	}
+	if normalizedConfigured["changed"] != true {
+		t.Fatalf("config update changed = %#v, want true", normalizedConfigured["changed"])
+	}
+
+	unchanged, err := runtime.Call(context.Background(), "acp_session", map[string]any{
+		"action": "update", "session_id": session.ID, "config_id": "safe", "config_value": false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalizedUnchanged := assertToolResultMatchestestOutputSchema(t, "acp_session", unchanged)
+	change, ok = normalizedUnchanged["change"].(map[string]any)
+	if !ok || change["before"] != false || change["after"] != false {
+		t.Fatalf("unchanged config update change = %#v", normalizedUnchanged["change"])
+	}
+	if normalizedUnchanged["changed"] != false {
+		t.Fatalf("unchanged config update changed = %#v, want false", normalizedUnchanged["changed"])
+	}
+
+	moded, err := runtime.Call(context.Background(), "acp_session", map[string]any{
+		"action": "update", "session_id": session.ID, "mode_id": "review",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalizedModed := assertToolResultMatchestestOutputSchema(t, "acp_session", moded)
+	change, ok = normalizedModed["change"].(map[string]any)
+	if !ok || change["field"] != "mode" || change["before"] != "code" || change["after"] != "review" {
+		t.Fatalf("mode update change = %#v", normalizedModed["change"])
+	}
+	if normalizedModed["changed"] != true {
+		t.Fatalf("mode update changed = %#v, want true", normalizedModed["changed"])
+	}
+}
+
+func newOutputContractACPRuntime(t *testing.T, stateful bool) *Runtime {
+	t.Helper()
+	const (
+		helperEnv = "GO_WANT_OUTPUT_CONTRACT_ACP_HELPER"
+		stateEnv  = "GO_OUTPUT_CONTRACT_ACP_STATEFUL"
+	)
+	t.Setenv(helperEnv, "1")
+	envFromEnv := map[string]string{helperEnv: helperEnv}
+	if stateful {
+		t.Setenv(stateEnv, "1")
+		envFromEnv[stateEnv] = stateEnv
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	cfg := config.Config{
+		AgentDockHome:       filepath.Join(root, ".agentdock"),
+		AgentDockDefaultDir: root,
+		ACPEnabled:          true,
+		ACPProfiles: []config.ACPProfile{{
+			ID: "output-contract-helper", Kind: "custom", Command: executable,
+			Args:       []string{"-test.run=^TestOutputContractACPHelper$"},
+			EnvFromEnv: envFromEnv, Enabled: true,
+		}},
+		ACPDefaultProfile: "output-contract-helper",
+	}
+	if err := cfg.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := NewRuntime(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtime
 }
 
 func assertACPOptionalSessionFieldsAbsent(t *testing.T, result Result) {
@@ -419,6 +497,10 @@ func TestOutputContractACPHelper(t *testing.T) {
 		case "session/new", "session/fork":
 			remoteSession++
 			result = map[string]any{"sessionId": "remote-" + strconv.Itoa(remoteSession)}
+			if os.Getenv("GO_OUTPUT_CONTRACT_ACP_STATEFUL") == "1" {
+				result.(map[string]any)["modes"] = map[string]any{"currentModeId": "code", "availableModes": []any{}}
+				result.(map[string]any)["configOptions"] = []map[string]any{{"id": "safe", "name": "Safe", "type": "boolean", "currentValue": true}}
+			}
 		case "session/list":
 			cwd, _ := os.Getwd()
 			sessions := make([]map[string]any, 0, remoteSession)
@@ -427,9 +509,24 @@ func TestOutputContractACPHelper(t *testing.T) {
 			}
 			result = map[string]any{"sessions": sessions}
 		case "session/load", "session/resume":
+			if os.Getenv("GO_OUTPUT_CONTRACT_ACP_STATEFUL") == "1" {
+				result = map[string]any{
+					"modes":         map[string]any{"currentModeId": "code", "availableModes": []any{}},
+					"configOptions": []map[string]any{{"id": "safe", "name": "Safe", "type": "boolean", "currentValue": true}},
+				}
+			} else {
+				result = map[string]any{}
+			}
+		case "session/set_mode":
 			result = map[string]any{}
 		case "session/set_config_option":
-			result = map[string]any{"configOptions": []any{}}
+			if os.Getenv("GO_OUTPUT_CONTRACT_ACP_STATEFUL") == "1" {
+				result = map[string]any{
+					"configOptions": []map[string]any{{"id": "safe", "name": "Safe", "type": "boolean", "currentValue": false}},
+				}
+			} else {
+				result = map[string]any{"configOptions": []any{}}
+			}
 		case "session/prompt":
 			time.Sleep(2 * time.Second)
 			result = map[string]any{"stopReason": "end_turn"}

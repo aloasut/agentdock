@@ -2,16 +2,20 @@ package nexusbridge
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 	protocol "github.com/uvwt/agentdock-protocol"
+	"github.com/uvwt/agentdock/internal/app"
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/mcp"
+	"github.com/uvwt/agentdock/internal/observability"
 	"github.com/uvwt/agentdock/internal/publicartifacts"
 )
 
@@ -195,5 +199,108 @@ func TestBridgeRunReturnsAfterCanceledDialContext(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("bridge Run did not return for canceled context")
+	}
+}
+
+func TestBridgeToolInvokeContinuesTraceContextIntoRuntime(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Config{
+		AgentDockDefaultDir: filepath.Join(root, "workspace"),
+		AgentDockHome:       filepath.Join(root, ".agentdock"),
+	}
+	if err := cfg.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := app.NewRuntime(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	node := mcp.NewServer(runtime, cfg)
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	responseCh := make(chan protocol.Message, 1)
+	serverErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		socket, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer socket.Close()
+		var hello protocol.Message
+		if err := socket.ReadJSON(&hello); err != nil {
+			serverErr <- err
+			return
+		}
+		if err := socket.WriteJSON(protocol.Message{Type: protocol.MessageNodeReady, ProtocolVersion: protocol.ConnectionProtocolVersion, HeartbeatMS: 60_000}); err != nil {
+			serverErr <- err
+			return
+		}
+		arguments, _ := json.Marshal(map[string]any{"tool": "agentdock_context", "arguments": map[string]any{}})
+		if err := socket.WriteJSON(protocol.Message{
+			Type: protocol.MessageToolInvoke, RequestID: "trace-call", Operation: protocol.OperationToolCall, Arguments: arguments,
+			Traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+			Tracestate:  "rojo=00f067aa0ba902b7",
+		}); err != nil {
+			serverErr <- err
+			return
+		}
+		var response protocol.Message
+		if err := socket.ReadJSON(&response); err != nil {
+			serverErr <- err
+			return
+		}
+		responseCh <- response
+		for {
+			if _, _, err := socket.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := NewClient(
+		Identity{Endpoint: server.URL, NodeID: "node-trace", DeviceID: "device-trace", DeviceToken: "trace-token"},
+		node, runtime, publicartifacts.Store{}, &ConnectionState{},
+	)
+	done := make(chan struct{})
+	go func() {
+		client.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case response := <-responseCh:
+		if response.Type != protocol.MessageToolResult || response.RequestID != "trace-call" {
+			t.Fatalf("response = %#v", response)
+		}
+	case err := <-serverErr:
+		t.Fatal(err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for traced bridge response")
+	}
+
+	recent, ok := runtime.RuntimeAnalytics()["recent_calls"].([]observability.ExecutionRecord)
+	if !ok || len(recent) == 0 {
+		t.Fatalf("recent calls = %#v", runtime.RuntimeAnalytics()["recent_calls"])
+	}
+	record := recent[0]
+	if record.Tool != "agentdock_context" || record.Source != observability.SourceNexus {
+		t.Fatalf("bridge runtime record = %#v", record)
+	}
+	if record.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("trace id = %q", record.TraceID)
+	}
+	if record.SpanID != "" {
+		t.Fatalf("runtime span id = %q, want empty without an installed SDK", record.SpanID)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("bridge did not stop after cancellation")
 	}
 }

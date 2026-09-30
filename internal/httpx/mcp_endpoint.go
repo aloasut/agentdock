@@ -57,7 +57,8 @@ func mcpEndpointHandler(server *mcp.Server, cfg config.Config, oauthStore *auth.
 		if r.Method == http.MethodPost && !prepareMCPRequestBody(w, r) {
 			return
 		}
-		ctx := requestmeta.WithBaseURL(r.Context(), requestPublicBaseURL(cfg, r))
+		ctx := extractMCPTraceContext(r.Context(), r.Header)
+		ctx = requestmeta.WithBaseURL(ctx, requestPublicBaseURL(cfg, r))
 		transport.ServeHTTP(w, r.WithContext(ctx))
 	}
 }

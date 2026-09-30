@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/uvwt/agentdock/internal/envstore"
-	skills "github.com/uvwt/agentdock/internal/skill"
 )
 
 func TestSkillManageInstallUpdateAndEnvironment(t *testing.T) {
@@ -23,13 +23,10 @@ func TestSkillManageInstallUpdateAndEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, ok := installed["result"].(skills.InstallResult)
-	if !ok || result.Skill != "demo-skill" || !result.Changed || result.ContentDigest == "" {
+	if installed["skill"] != "demo-skill" || installed["changed"] != true || installed["content_digest"] == "" {
 		t.Fatalf("unexpected install result: %#v", installed)
 	}
-	if result.Path != filepath.Join(root, ".agentdock", "skills", "demo-skill") {
-		t.Fatalf("managed Skill path = %q", result.Path)
-	}
+	firstDigest := installed["content_digest"]
 
 	repeat, err := runtime.manageTest(context.Background(), map[string]any{"action": "install", "source": "demo-skill"})
 	if err != nil {
@@ -52,7 +49,7 @@ func TestSkillManageInstallUpdateAndEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated["changed"] != true || updated["content_digest"] == result.ContentDigest {
+	if updated["changed"] != true || updated["content_digest"] == firstDigest {
 		t.Fatalf("changed install did not update current content: %#v", updated)
 	}
 	if data, err := os.ReadFile(dataPath); err != nil || string(data) != "persistent" {
@@ -61,12 +58,12 @@ func TestSkillManageInstallUpdateAndEnvironment(t *testing.T) {
 
 	secret := "configured-value"
 	if _, err := runtime.manageTest(context.Background(), map[string]any{
-		"action": "env_set", "skill": "demo-skill", "key": "TOKEN", "value": secret,
+		"action": "env_set", "skill_ref": "skill://managed/demo-skill", "key": "TOKEN", "value": secret,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	environment, err := runtime.manageTest(context.Background(), map[string]any{
-		"action": "env_list", "skill": "demo-skill",
+		"action": "env_list", "skill_ref": "skill://managed/demo-skill",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +88,7 @@ func TestSkillManageRejectsSettingReservedDataDirButAllowsCleanup(t *testing.T) 
 	}
 
 	if _, err := runtime.manageTest(context.Background(), map[string]any{
-		"action": "env_set", "skill": "demo-skill", "key": "SKILL_DATA_DIR", "value": "/tmp/override",
+		"action": "env_set", "skill_ref": "skill://managed/demo-skill", "key": "SKILL_DATA_DIR", "value": "/tmp/override",
 	}); err == nil || !strings.Contains(err.Error(), "reserved") {
 		t.Fatalf("reserved env_set error = %v", err)
 	}
@@ -101,7 +98,7 @@ func TestSkillManageRejectsSettingReservedDataDirButAllowsCleanup(t *testing.T) 
 		t.Fatal(err)
 	}
 	result, err := runtime.manageTest(context.Background(), map[string]any{
-		"action": "env_unset", "skill": "demo-skill", "key": "SKILL_DATA_DIR",
+		"action": "env_unset", "skill_ref": "skill://managed/demo-skill", "key": "SKILL_DATA_DIR",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -211,5 +208,42 @@ func writeToolSkillPackage(t *testing.T, root, heading string) {
 	}
 	if err := os.WriteFile(filepath.Join(root, "references", "guide.md"), []byte("# Guide\n"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSkillEnvironmentUsesLifecycleReadLock(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "demo-skill")
+	writeToolSkillPackage(t, source, "Demo")
+	runtime, _ := newSkillTestServiceAtRoot(t, root)
+	if _, err := runtime.manageTest(context.Background(), map[string]any{"action": "install", "source": "demo-skill"}); err != nil {
+		t.Fatal(err)
+	}
+
+	release, err := runtime.state.AcquireWrite(context.Background(), "demo-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := runtime.manageTest(context.Background(), map[string]any{
+			"action": "env_set", "skill_ref": "skill://managed/demo-skill", "key": "TOKEN", "value": "value",
+		})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		release()
+		t.Fatalf("env_set completed while Skill lifecycle writer lock was held: %v", err)
+	case <-time.After(120 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("env_set did not resume after Skill lifecycle writer lock release")
 	}
 }

@@ -64,12 +64,12 @@ func assertResourceUIMeta(t *testing.T, meta mcpsdk.Meta, domain string) {
 }
 
 func newMCPAppTestHarness(t *testing.T, cfg config.Config) *mcpAppTestHarness {
-	return newMCPAppTestHarnessWithApps(t, cfg, true)
+	return newMCPAppTestHarnessWithMode(t, cfg, config.MCPAppsModeFull)
 }
 
-func newMCPAppTestHarnessWithApps(t *testing.T, cfg config.Config, enabled bool) *mcpAppTestHarness {
+func newMCPAppTestHarnessWithMode(t *testing.T, cfg config.Config, mode config.MCPAppsMode) *mcpAppTestHarness {
 	t.Helper()
-	cfg.MCPAppsEnabled = enabled
+	cfg.MCPAppsMode = mode
 	if err := cfg.Normalize(); err != nil {
 		t.Fatalf("Normalize() error = %v", err)
 	}
@@ -109,11 +109,11 @@ func newMCPAppTestHarnessWithApps(t *testing.T, cfg config.Config, enabled bool)
 }
 
 func TestUIResourcesMatchServedResourceRegistry(t *testing.T) {
-	server := &Server{cfg: config.Config{NexusEndpoint: "https://nexus.example.test", ACPEnabled: true, MCPAppsEnabled: true}}
+	server := &Server{cfg: config.Config{NexusEndpoint: "https://nexus.example.test", ACPEnabled: true, MCPAppsMode: config.MCPAppsModeFull}}
 	definitions := server.appResourceDefinitions()
 	resources := server.UIResources()
-	if len(definitions) != 8 || len(resources) != len(definitions) {
-		t.Fatalf("resource registry=%d bridge capabilities=%d, want 8", len(definitions), len(resources))
+	if len(definitions) != 11 || len(resources) != len(definitions) {
+		t.Fatalf("resource registry=%d bridge capabilities=%d, want 11", len(definitions), len(resources))
 	}
 	byURI := make(map[string]protocol.UIResourceCapability, len(resources))
 	for _, resource := range resources {
@@ -139,10 +139,10 @@ func TestUIResourcesMatchServedResourceRegistry(t *testing.T) {
 
 func TestMCPAppsCanBeDisabledWithoutRemovingTools(t *testing.T) {
 	root := t.TempDir()
-	harness := newMCPAppTestHarnessWithApps(t, config.Config{
+	harness := newMCPAppTestHarnessWithMode(t, config.Config{
 		AgentDockDefaultDir: root,
 		AgentDockHome:       filepath.Join(root, ".agentdock"),
-	}, false)
+	}, config.MCPAppsModeOff)
 
 	tools := map[string]*mcpsdk.Tool{}
 	for tool, err := range harness.session.Tools(t.Context(), nil) {
@@ -151,10 +151,10 @@ func TestMCPAppsCanBeDisabledWithoutRemovingTools(t *testing.T) {
 		}
 		tools[tool.Name] = tool
 	}
-	if tools["agentdock_context"] == nil || tools["file_edit"] == nil || tools["task_manage"] == nil {
+	if tools["agentdock_context"] == nil || tools["workspace_context"] == nil || tools["file_edit"] == nil || tools["task_manage"] == nil {
 		t.Fatalf("core tools disappeared when MCP Apps UI was disabled: %#v", tools)
 	}
-	for _, name := range []string{"agentdock_context", "file_edit", "task_manage", "mcp_tool_call", "file_publish"} {
+	for _, name := range []string{"agentdock_context", "workspace_context", "file_edit", "task_manage", "mcp_tool_call", "file_publish"} {
 		if ui := tools[name].Meta["ui"]; ui != nil {
 			t.Fatalf("%s still exposes Apps UI metadata while disabled: %#v", name, ui)
 		}
@@ -181,6 +181,75 @@ func TestMCPAppsCanBeDisabledWithoutRemovingTools(t *testing.T) {
 	}
 }
 
+func TestMCPAppsCompactFiltersBindingsButKeepsResources(t *testing.T) {
+	root := t.TempDir()
+	harness := newMCPAppTestHarnessWithMode(t, config.Config{
+		AgentDockDefaultDir: root,
+		AgentDockHome:       filepath.Join(root, ".agentdock"),
+	}, config.MCPAppsModeCompact)
+
+	tools := map[string]*mcpsdk.Tool{}
+	for tool, err := range harness.session.Tools(t.Context(), nil) {
+		if err != nil {
+			t.Fatalf("Tools() error = %v", err)
+		}
+		tools[tool.Name] = tool
+	}
+	assertToolUIResource(t, tools["view_image"], protocol.ImageUIResourceURI)
+	assertToolUIResource(t, tools["agentdock_context"], protocol.ContextUIResourceURI)
+	assertToolUIResource(t, tools["workspace_context"], protocol.WorkspaceUIResourceURI)
+	assertToolUIResource(t, tools["task_manage"], protocol.TaskProgressUIResourceURI)
+	for _, name := range []string{"file_edit", "mcp_tool_call", "workflow_template_manage"} {
+		if tool := tools[name]; tool != nil {
+			if ui := tool.Meta["ui"]; ui != nil {
+				t.Fatalf("%s should not attach descriptor UI in compact mode: %#v", name, ui)
+			}
+		}
+	}
+	assertToolUIResource(t, tools["file_publish"], protocol.ArtifactUIResourceURI, "file_arg_rewrite_paths", "openai/fileParams")
+
+	taskDef, ok := harness.runtime.ToolDefinition("task_manage")
+	if !ok {
+		t.Fatal("task_manage definition missing")
+	}
+	for _, action := range []string{"create", "list", "get", "checkpoint", "block", "resume", "final_review", "complete"} {
+		if meta := toolResultMetadata(taskDef, map[string]any{"action": action}, config.MCPAppsModeCompact); len(meta) != 0 {
+			t.Fatalf("task %s should not attach UI in compact mode: %#v", action, meta)
+		}
+	}
+
+	workflowDef, ok := toolDefinition("workflow_template_manage")
+	if !ok {
+		t.Fatal("workflow_template_manage definition missing")
+	}
+	for _, action := range []string{"match", "list"} {
+		if meta := toolResultMetadata(workflowDef, map[string]any{"action": action}, config.MCPAppsModeCompact); len(meta) != 0 {
+			t.Fatalf("workflow %s should not attach UI in compact mode: %#v", action, meta)
+		}
+	}
+
+	resources := map[string]bool{}
+	for resource, err := range harness.session.Resources(t.Context(), nil) {
+		if err != nil {
+			t.Fatalf("Resources() error = %v", err)
+		}
+		resources[resource.URI] = true
+	}
+	for _, uri := range []string{
+		protocol.ImageUIResourceURI,
+		protocol.ContextUIResourceURI,
+		protocol.WorkspaceUIResourceURI,
+		protocol.TaskProgressUIResourceURI,
+		protocol.FileChangeUIResourceURI,
+		protocol.DynamicMCPUIResourceURI,
+		protocol.ArtifactUIResourceURI,
+	} {
+		if !resources[uri] {
+			t.Fatalf("compact mode removed readable resource %s: %#v", uri, resources)
+		}
+	}
+}
+
 func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 	root := t.TempDir()
 	const widgetDomain = "https://dockmini.example.test"
@@ -202,14 +271,19 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		}
 		tools[tool.Name] = tool
 	}
-	if len(tools) != 17 {
-		t.Fatalf("tools/list count = %d, want 17", len(tools))
+	if want := len(harness.server.ToolNames()); len(tools) != want {
+		t.Fatalf("tools/list count = %d, want runtime registry count %d", len(tools), want)
 	}
 	contextTool := tools["agentdock_context"]
 	if contextTool == nil {
 		t.Fatal("tools/list did not expose agentdock_context")
 	}
 	assertToolUIResource(t, contextTool, protocol.ContextUIResourceURI)
+	workspaceTool := tools["workspace_context"]
+	if workspaceTool == nil {
+		t.Fatal("tools/list did not expose workspace_context")
+	}
+	assertToolUIResource(t, workspaceTool, protocol.WorkspaceUIResourceURI)
 	fileEditTool := tools["file_edit"]
 	if fileEditTool == nil {
 		t.Fatal("tools/list did not expose file_edit")
@@ -251,11 +325,12 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		}
 		resources[resource.URI] = resource
 	}
-	if len(resources) != 5 {
-		t.Fatalf("resources/list count = %d, want 5", len(resources))
+	if len(resources) != 7 {
+		t.Fatalf("resources/list count = %d, want 7", len(resources))
 	}
 	for _, uri := range []string{
 		protocol.ContextUIResourceURI,
+		protocol.WorkspaceUIResourceURI,
 		protocol.TaskProgressUIResourceURI,
 		protocol.FileChangeUIResourceURI,
 		protocol.DynamicMCPUIResourceURI,
@@ -306,14 +381,28 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("agent context resource = %#v", contextRead.Contents)
 	}
 	contextHTML := contextRead.Contents[0].Text
-	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "renderNodeAgentContext", "renderFleetAgentContext", "appendNodeAgentContext", "contextItems", "appendContextOverview", "appendContextSection", "contextPill", `contextItems(data.skills)`, `appendContextOverview(overview,skills.length,t("agentDockSkills"))`, `appendContextSection(groups,t("agentDockSkills"),skills,10)`, `contextPill(summary.skills.length,t("agentDockSkills"))`, `const commonSkillIndex=isObject(data.common_skills)?data.common_skills:{}`, `appendContextSection(groups,t("commonSkills"),commonSkills,10)`, `contextItems(data.dynamic_mcp)`, `Array.isArray(data.nodes)`, `const fleetOverview=el("div","context-overview fleet-overview")`, `appendContextOverview(fleetOverview,nodes.length,t("devices"))`, `appendContextOverview(fleetOverview,online,t("online"))`, `const tabs=el("div","context-node-tabs")`, `fragment.append(tabs,fleetOverview,content)`, `.fleet-overview{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:11px}`, `.context-node-tabs{display:flex;justify-content:safe center`, `.context-node-tab{flex:0 0 auto;border:1px solid var(--ad-border)`, `contextPill(workflowCount,t("workflow"))`, `contextPill(recallEnabled?t("on"):t("off"),t("recall"))`, `button.addEventListener("click",()=>selectNode(index))`, `appendNodeAgentContext(content,{`, `common_skills:node.context.common_skills`, `workflow_templates:shared.workflow_templates`, `const status=node.error?t("unavailable"):(node.online===true?t("online"):stateLabel("offline"))`, `.context-node-tab.active{border-color:var(--ad-text-primary);color:var(--ad-text-primary)}`, `.context-node-content{padding-top:11px}`, ".context-overview{display:grid;grid-template-columns:repeat(4", ".context-overview-card{min-width:0;padding:1px 12px;border-right:1px solid var(--ad-border)", ".context-overview-value{font-size:18px;font-weight:760;line-height:1;color:var(--ad-text-primary)", ".context-section+.context-section{border-top:1px solid var(--ad-border)", ".context-list{display:grid;grid-template-columns:repeat(2", ".context-item{min-width:0;padding:7px 0;border-bottom:1px solid var(--ad-border-soft)", ".context-section-title{font-size:11.5px;font-weight:750;letter-spacing:.01em;color:var(--ad-text-primary)", ".context-name{font-size:11.5px;font-weight:650;color:var(--ad-text-primary)", ".context-desc{margin-top:1px;min-width:0;color:var(--ad-text-muted)", ".compact-context"} {
+	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "renderNodeAgentContext", "renderFleetAgentContext", "appendNodeAgentContext", "contextItems", "appendContextOverview", "appendContextSection", "contextPill", `contextItems(data.skills)`, `pluginContextItems(data.plugins)`, `acpContextItems(data.acp)`, `appendContextOverview(overview,skills.length,t("agentDockSkills"))`, `appendContextOverview(overview,plugins.length,t("plugins"))`, `appendContextOverview(overview,acps.length,"ACP")`, `appendContextSection(groups,t("agentDockSkills"),skills,10)`, `contextPill(summary.skills.length,t("skills"))`, `contextPill(summary.plugins.length,t("plugins"))`, `contextPill(summary.mcps.length,"MCP")`, `contextPill(summary.workflows.length,t("workflow"),"workflow")`, `contextPill(summary.recall?t("on"):t("off"),t("recall"))`, `const commonSkillIndex=isObject(data.common_skills)?data.common_skills:{}`, `appendContextSection(groups,t("commonSkills"),commonSkills,10)`, `appendContextSection(groups,t("plugins"),plugins,8)`, `appendContextSection(groups,"ACP",acps,8)`, `id===defaultProfile?t("defaultProfile")`, `contextItems(data.dynamic_mcp)`, `Array.isArray(data.nodes)`, `const fleetOverview=el("div","context-overview fleet-overview")`, `appendContextOverview(fleetOverview,nodes.length,t("devices"))`, `appendContextOverview(fleetOverview,online,t("online"))`, `const tabs=el("div","context-node-tabs")`, `fragment.append(tabs,fleetOverview,content)`, `.fleet-overview,.workspace-overview{grid-template-columns:repeat(2,minmax(0,1fr))}`, `.context-node-tabs{display:flex;justify-content:safe center`, `.context-node-tab{flex:0 0 auto;border:1px solid var(--ad-border)`, `contextPill(workflowCount,t("workflow"))`, `contextPill(recallEnabled?t("on"):t("off"),t("recall"))`, `button.addEventListener("click",()=>selectNode(index))`, `appendNodeAgentContext(content,{`, `common_skills:node.context.common_skills`, `plugins:node.context.plugins`, `workflow_templates:shared.workflow_templates`, `const status=node.error?t("unavailable"):(node.online===true?t("online"):stateLabel("offline"))`, `.context-node-tab.active{border-color:var(--ad-text-primary);color:var(--ad-text-primary)}`, `.context-node-content{padding-top:11px}`, ".context-overview{display:grid;grid-template-columns:repeat(4", ".context-overview-card{min-width:0;padding:1px 12px;border-right:1px solid var(--ad-border)", ".context-overview-value{font-size:18px;font-weight:760;line-height:1;color:var(--ad-text-primary)", ".context-section+.context-section{border-top:1px solid var(--ad-border)", ".context-list{display:grid;grid-template-columns:repeat(2", ".context-item{min-width:0;padding:7px 0;border-bottom:1px solid var(--ad-border-soft)", ".context-section-title{font-size:11.5px;font-weight:750;letter-spacing:.01em;color:var(--ad-text-primary)", ".context-name{font-size:11.5px;font-weight:650;color:var(--ad-text-primary)", ".context-desc{margin-top:1px;min-width:0;color:var(--ad-text-muted)", ".compact-context"} {
 		if !strings.Contains(contextHTML, marker) {
 			t.Fatalf("agent context resource missing structured summary marker %q", marker)
 		}
 	}
-	for _, rawMarker := range []string{`el("pre","context-text",text)`, "contextSectionLines", "contextNamedItems", `String(data.context||"")`, ".context-overview-card{padding:10px 11px", ".context-item{min-width:0;padding:8px 9px;border-radius:9px;background:#f8f8f8"} {
+	for _, rawMarker := range []string{`el("pre","context-text",text)`, "contextSectionLines", "contextNamedItems", `String(data.context||"")`, `contextPill(summary.acps.length,"ACP")`, ".context-overview-card{padding:10px 11px", ".context-item{min-width:0;padding:8px 9px;border-radius:9px;background:#f8f8f8"} {
 		if strings.Contains(contextHTML, rawMarker) {
 			t.Fatalf("agent context resource still renders raw context marker %q", rawMarker)
+		}
+	}
+
+	workspaceRead, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: protocol.WorkspaceUIResourceURI})
+	if err != nil {
+		t.Fatalf("ReadResource(workspace context) error = %v", err)
+	}
+	if len(workspaceRead.Contents) != 1 {
+		t.Fatalf("workspace context resource = %#v", workspaceRead.Contents)
+	}
+	workspaceHTML := workspaceRead.Contents[0].Text
+	for _, marker := range []string{`expectedView="workspace_context"`, "renderWorkspaceContext", "workspace-rule-list", `t("rules")`, `t("skills")`, `t("workdir")`, `t("workspaceRoot")`} {
+		if !strings.Contains(workspaceHTML, marker) {
+			t.Fatalf("workspace context resource missing marker %q", marker)
 		}
 	}
 
@@ -393,7 +482,7 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 	if resources[protocol.RecallUIResourceURI] != nil || resources[protocol.WorkflowUIResourceURI] != nil {
 		t.Fatal("Nexus-only UI resources should not be listed when Nexus is disabled")
 	}
-	if resources[protocol.ACPStatusUIResourceURI] != nil {
+	if resources[protocol.ACPStatusUIResourceURI] != nil || resources[protocol.ACPPromptUIResourceURI] != nil {
 		t.Fatal("ACP UI resource should not be listed when ACP is disabled")
 	}
 
@@ -412,6 +501,20 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 	}
 	if contextStructured["context"] != nil {
 		t.Fatalf("agentdock_context structuredContent still contains legacy Markdown context: %#v", contextStructured)
+	}
+
+	workspaceResult, err := harness.session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "workspace_context", Arguments: map[string]any{}})
+	if err != nil || workspaceResult.IsError {
+		t.Fatalf("workspace_context result=%#v err=%v", workspaceResult, err)
+	}
+	workspaceStructured, ok := workspaceResult.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("workspace_context structuredContent = %#v", workspaceResult.StructuredContent)
+	}
+	for _, field := range []string{"workdir", "workspace_root", "instructions", "workspace_skills", "warnings"} {
+		if workspaceStructured[field] == nil {
+			t.Fatalf("workspace_context structuredContent missing %s: %#v", field, workspaceStructured)
+		}
 	}
 
 	filePath := filepath.Join(root, "note.txt")
@@ -515,12 +618,12 @@ func TestMCPAppsExposeNexusViewsWhenNexusEnabled(t *testing.T) {
 	if !ok {
 		t.Fatal("workflow_template_manage definition missing")
 	}
-	matchMeta := toolResultMetadata(workflowDef, map[string]any{"action": "match"}, true)
+	matchMeta := toolResultMetadata(workflowDef, map[string]any{"action": "match"}, config.MCPAppsModeFull)
 	matchUI, ok := matchMeta["ui"].(map[string]any)
 	if !ok || matchUI["resourceUri"] != protocol.WorkflowUIResourceURI {
 		t.Fatalf("workflow match result UI metadata = %#v", matchMeta)
 	}
-	if meta := toolResultMetadata(workflowDef, map[string]any{"action": "list"}, true); len(meta) != 0 {
+	if meta := toolResultMetadata(workflowDef, map[string]any{"action": "list"}, config.MCPAppsModeFull); len(meta) != 0 {
 		t.Fatalf("workflow list should not bind result UI: %#v", meta)
 	}
 	if tool := tools["recall_bootstrap"]; tool != nil {
@@ -534,8 +637,8 @@ func TestMCPAppsExposeNexusViewsWhenNexusEnabled(t *testing.T) {
 		}
 		resources[resource.URI] = resource
 	}
-	if len(resources) != 7 {
-		t.Fatalf("resources/list count = %d, want 7", len(resources))
+	if len(resources) != 9 {
+		t.Fatalf("resources/list count = %d, want 9", len(resources))
 	}
 	for _, tc := range []struct {
 		uri      string
@@ -602,7 +705,7 @@ func TestReadAppResourceForNexusBridge(t *testing.T) {
 	}
 }
 
-func TestMCPAppsExposeACPViewOnlyWhenACPEnabled(t *testing.T) {
+func TestMCPAppsExposeACPViewsOnlyWhenACPEnabled(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -625,16 +728,15 @@ func TestMCPAppsExposeACPViewOnlyWhenACPEnabled(t *testing.T) {
 		}
 		tools[tool.Name] = tool
 	}
-	if len(tools) != 20 {
-		t.Fatalf("tools/list count = %d, want 20", len(tools))
+	if want := len(harness.server.ToolNames()); len(tools) != want {
+		t.Fatalf("tools/list count = %d, want runtime registry count %d", len(tools), want)
 	}
 	assertToolUIResource(t, tools["acp_session"], protocol.ACPStatusUIResourceURI)
-	for _, name := range []string{"acp_prompt", "acp_interaction"} {
-		if tool := tools[name]; tool == nil {
-			t.Fatalf("%s was not exposed", name)
-		} else if tool.Meta["ui"] != nil {
-			t.Fatalf("%s should not bind a static ACP widget: %#v", name, tool.Meta)
-		}
+	assertToolUIResource(t, tools["acp_prompt"], protocol.ACPPromptUIResourceURI)
+	if tool := tools["acp_interaction"]; tool == nil {
+		t.Fatal("acp_interaction was not exposed")
+	} else if tool.Meta["ui"] != nil {
+		t.Fatalf("acp_interaction should not bind a static ACP widget: %#v", tool.Meta)
 	}
 
 	read, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: protocol.ACPStatusUIResourceURI})
@@ -644,13 +746,26 @@ func TestMCPAppsExposeACPViewOnlyWhenACPEnabled(t *testing.T) {
 	if len(read.Contents) != 1 || !strings.Contains(read.Contents[0].Text, "acp_status") {
 		t.Fatalf("ACP resource contents = %#v", read.Contents)
 	}
-	for _, marker := range []string{"message-role", `message.role!=="user"&&message.role!=="assistant"`, "No user or assistant messages in this AgentDock process.", `session.agent||(isObject(state.agent)`, `const latest=[...state.messages].reverse().find`, `compactRows.push(el("span","compact-summary",latest.content))`, `const sessionMeta=[session.status||state.status,session.agent||"",session.cwd||""]`, `compactShell({action:state.action||"status",title:identity}`} {
+	for _, marker := range []string{"message-role", `function renderACP(data)`, `appendACPChatMessages(fragment,transcript)`, `compactShell({action,title:identity}`} {
 		if !strings.Contains(read.Contents[0].Text, marker) {
 			t.Fatalf("ACP resource missing conversation marker %q", marker)
 		}
 	}
 	assertResourceUIMeta(t, read.Contents[0].Meta, "")
 
+	promptRead, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: protocol.ACPPromptUIResourceURI})
+	if err != nil {
+		t.Fatalf("ReadResource(ACP prompt) error = %v", err)
+	}
+	if len(promptRead.Contents) != 1 || !strings.Contains(promptRead.Contents[0].Text, `expectedView="acp_prompt"`) {
+		t.Fatalf("ACP prompt resource contents = %#v", promptRead.Contents)
+	}
+	for _, marker := range []string{`function renderACPPrompt(data)`, `acpPromptText(lastToolInput.prompt)`, `action==="events"&&transcript.length`} {
+		if !strings.Contains(promptRead.Contents[0].Text, marker) {
+			t.Fatalf("ACP prompt resource missing marker %q", marker)
+		}
+	}
+	assertResourceUIMeta(t, promptRead.Contents[0].Meta, "")
 }
 
 func TestAppWidgetDomainRequiresHTTPSOrigin(t *testing.T) {

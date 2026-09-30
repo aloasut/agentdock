@@ -7,12 +7,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/uvwt/agentdock/internal/fs/processlock"
 	"github.com/uvwt/agentdock/internal/updateengine"
+	"golang.org/x/sys/windows"
 )
 
 func TestTrayRequiresWaitOnlyDetachesNormalBackgroundLaunches(t *testing.T) {
@@ -36,6 +38,24 @@ func TestTrayRequiresWaitOnlyDetachesNormalBackgroundLaunches(t *testing.T) {
 				t.Fatalf("trayRequiresWait(%q) = %v, want %v", test.args, got, test.want)
 			}
 		})
+	}
+}
+
+func TestConfigureForwardedCoreCommandPreservesConsolePolicy(t *testing.T) {
+	interactive := exec.Command("cmd.exe")
+	configureForwardedCoreCommand(interactive, true)
+	if interactive.SysProcAttr != nil &&
+		(interactive.SysProcAttr.HideWindow || interactive.SysProcAttr.CreationFlags&windows.CREATE_NO_WINDOW != 0) {
+		t.Fatalf("interactive forwarding unexpectedly hides the console: %#v", interactive.SysProcAttr)
+	}
+
+	background := exec.Command("cmd.exe")
+	configureForwardedCoreCommand(background, false)
+	if background.SysProcAttr == nil || !background.SysProcAttr.HideWindow {
+		t.Fatalf("background forwarding must hide the generation Core: %#v", background.SysProcAttr)
+	}
+	if background.SysProcAttr.CreationFlags&windows.CREATE_NO_WINDOW == 0 {
+		t.Fatalf("background forwarding creation flags = %#x, want CREATE_NO_WINDOW", background.SysProcAttr.CreationFlags)
 	}
 }
 

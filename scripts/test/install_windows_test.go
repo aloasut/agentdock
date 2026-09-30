@@ -203,6 +203,16 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	if !strings.Contains(script, "install inspect --state-root $runtimeDir") {
 		t.Fatal("Setup must read the generation pointer state through the Installer Engine inspect, not by parsing active-version.json")
 	}
+	nativeUTF8Set := strings.Index(script, "[Console]::OutputEncoding = $Utf8NoBom")
+	nativeJSONCall := strings.Index(script, "$preflightVersionOutput = @(& $sourceBinary version --json 2>&1)")
+	nativeUTF8Restore := strings.LastIndex(script, "[Console]::OutputEncoding = $previousConsoleOutputEncoding")
+	if nativeUTF8Set < 0 || nativeJSONCall < 0 || nativeUTF8Restore < 0 ||
+		nativeUTF8Set > nativeJSONCall || nativeUTF8Restore < nativeJSONCall {
+		t.Fatal("Windows PowerShell 5.1 must decode AgentDock native JSON stdout as UTF-8 and restore the caller encoding")
+	}
+	if !strings.Contains(script, "$existingManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json") {
+		t.Fatal("runtime.json must be read explicitly as UTF-8 on Windows PowerShell 5.1")
+	}
 	if !strings.Contains(script, "install prepare-windows-legacy") {
 		t.Fatal("pre-generation Windows installs must seed a committed legacy source before the current Engine publishes target files")
 	}
@@ -392,6 +402,11 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read uninstall-windows.ps1: %v", err)
 	}
+	for index, value := range data {
+		if value > 0x7f {
+			t.Fatalf("uninstall-windows.ps1 must remain ASCII for Windows PowerShell 5.1; non-ASCII byte at offset %d", index)
+		}
+	}
 	script := string(data)
 	for _, want := range []string{
 		"Get-CimInstance Win32_Process",
@@ -440,6 +455,20 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 		}
 	}
 	engineRunCall := strings.Index(script, "$engineUninstallJson =")
+	nativeUTF8Set := strings.Index(script, "[Console]::OutputEncoding = $Utf8NoBom")
+	nativeUTF8Restore := strings.Index(script, "[Console]::OutputEncoding = $previousConsoleOutputEncoding")
+	if nativeUTF8Set < 0 || engineRunCall < 0 || nativeUTF8Restore < 0 ||
+		nativeUTF8Set > engineRunCall || nativeUTF8Restore < engineRunCall {
+		t.Fatal("uninstall Engine JSON stdout must be decoded as UTF-8 without leaking console encoding changes")
+	}
+	for _, utf8Read := range []string{
+		"$runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json",
+		"$pendingTransaction = Get-Content -LiteralPath $installTransactionPath -Raw -Encoding UTF8 | ConvertFrom-Json",
+	} {
+		if !strings.Contains(script, utf8Read) {
+			t.Fatalf("uninstall JSON files must be read explicitly as UTF-8; missing %q", utf8Read)
+		}
+	}
 	taskCall := strings.Index(script, "Remove-AgentDockScheduledTask -AdminLauncherPath $trayBinary")
 	registryCall := strings.LastIndex(script, "Remove-RegistryValueIfPresent -Path $runKey")
 	commitCall := strings.Index(script, "install', 'commit'")
@@ -840,8 +869,8 @@ func TestWindowsSetupOwnsCoreActivationAndReadsStructuredFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read launch-windows-process.ps1: %v", err)
 	}
-	if !strings.Contains(string(brokerData), "[int] $TimeoutSeconds = 60") {
-		t.Fatal("Setup runtime broker timeout must exceed the 45-second Windows Core health timeout")
+	if !strings.Contains(string(brokerData), "[int] $TimeoutSeconds = 75") {
+		t.Fatal("Setup runtime broker must preserve launch headroom beyond the Windows Core health timeout")
 	}
 }
 func TestWindowsSetupRuntimeBrokerTimeoutExceedsCoreStartTimeout(t *testing.T) {
@@ -849,9 +878,9 @@ func TestWindowsSetupRuntimeBrokerTimeoutExceedsCoreStartTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read launch-windows-process.ps1: %v", err)
 	}
-	coreData, err := os.ReadFile(filepath.Join("..", "..", "internal", "desktopruntime", "service_windows.go"))
+	coreData, err := os.ReadFile(filepath.Join("..", "..", "internal", "desktopruntime", "health_timeout.go"))
 	if err != nil {
-		t.Fatalf("read service_windows.go: %v", err)
+		t.Fatalf("read health_timeout.go: %v", err)
 	}
 
 	parseSeconds := func(content, prefix string) int {
@@ -875,10 +904,32 @@ func TestWindowsSetupRuntimeBrokerTimeoutExceedsCoreStartTimeout(t *testing.T) {
 		return 0
 	}
 
+	installData, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install", "install.ps1"))
+	if err != nil {
+		t.Fatalf("read install.ps1: %v", err)
+	}
+
 	brokerSeconds := parseSeconds(string(brokerData), "[int] $TimeoutSeconds =")
-	coreSeconds := parseSeconds(string(coreData), "const windowsCoreStartTimeout =")
-	if brokerSeconds <= coreSeconds {
-		t.Fatalf("Setup runtime broker timeout=%ds must exceed Windows Core start timeout=%ds", brokerSeconds, coreSeconds)
+	coreSeconds := parseSeconds(string(coreData), "const WindowsCoreStartTimeout =")
+	setupHealthSeconds := parseSeconds(string(installData), "[int] $coreHealthTimeoutSeconds =")
+	if setupHealthSeconds != coreSeconds {
+		t.Fatalf(
+			"Setup health timeout=%ds must match Windows Core start timeout=%ds",
+			setupHealthSeconds,
+			coreSeconds,
+		)
+	}
+	if !strings.Contains(string(installData), "AddSeconds($coreHealthTimeoutSeconds)") {
+		t.Fatal("Setup health wait must use the shared Windows Core health budget")
+	}
+	const minimumHeadroomSeconds = 15
+	if brokerSeconds-coreSeconds < minimumHeadroomSeconds {
+		t.Fatalf(
+			"Setup runtime broker timeout=%ds must leave at least %ds beyond Windows Core start timeout=%ds",
+			brokerSeconds,
+			minimumHeadroomSeconds,
+			coreSeconds,
+		)
 	}
 }
 
@@ -1155,6 +1206,22 @@ func TestWindowsSetupE2EStagesCompleteLegacyFixture(t *testing.T) {
 			t.Fatalf("Windows Installer workflow must pass a real legacy fixture binary; missing %q", want)
 		}
 	}
+
+	releaseWorkflowData, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read Release workflow: %v", err)
+	}
+	releaseWorkflow := strings.ReplaceAll(string(releaseWorkflowData), "\r\n", "\n")
+	for _, want := range []string{
+		"agentdock_windows_amd64.zip",
+		"-LegacyCorePath $env:LEGACY_CORE_PATH",
+		"-LegacyTrayPath $env:LEGACY_TRAY_PATH",
+	} {
+		if !strings.Contains(releaseWorkflow, want) {
+			t.Fatalf("Release workflow must stage and pass a published legacy fixture binary; missing %q", want)
+		}
+	}
+
 }
 
 func TestWindowsReleaseKeepsPublishedUpdaterCompatibilityAsset(t *testing.T) {

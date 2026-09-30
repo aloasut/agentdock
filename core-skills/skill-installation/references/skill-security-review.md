@@ -45,8 +45,9 @@ blocked 包括：
 - `name` 符合命名规则并与来源目录身份一致；
 - `description` 足以区分触发场景；
 - 正文非空；
-- 可选 `license`、`compatibility`、`metadata`、`allowed-tools` 合理；
-- `metadata.version` 若存在只作为普通作者元数据；
+- `name` 遵守 1–64 字符、仅小写 ASCII 字母/数字/`-`、不首尾 `-`、不含连续 `--`；
+- `description` 最长 1024 字符；
+- 其他第三方 frontmatter 只作为保留元数据，不因 AgentDock 不使用或字段形状不同而阻塞安装；
 - 没有把 version、active_version、activate、rollback 设计成 AgentDock 生命周期。
 
 ## 4. 凭据与隐私
@@ -112,7 +113,7 @@ blocked 包括：
 - 临时文件权限安全；
 - 日志无 secret。
 
-持久状态在 AgentDock 中属于 `~/.agentdock/data/skills/<name>/`，但目标 Skill 不应硬编码该宿主路径。managed Skill 运行时应优先消费宿主注入的 `SKILL_DATA_DIR`；它是 AgentDock 保留变量，不能作为用户配置项或由请求覆盖。shared/workspace 候选不应得到 managed Skill 的该变量。
+持久状态在 AgentDock 中属于宿主管理的数据目录，但目标 Skill 不应硬编码这些路径。standalone managed Skill 使用 `~/.agentdock/data/skills/<name>/`；Plugin-owned Skill 使用独立 `~/.agentdock/data/skills/.plugin/<plugin>/<skill>/` 作为 `SKILL_DATA_DIR`，并可额外获得共享 `PLUGIN_DATA_DIR=~/.agentdock/data/plugins/<plugin>/`。两个运行时变量都属于 AgentDock 保留变量，不能作为用户配置项或由请求覆盖。shared/workspace 候选不应得到这两个变量。
 
 ## 8. 环境
 
@@ -134,7 +135,7 @@ blocked 包括：
 - 可验证 source digest（若有）；
 - `content_digest`；
 - `changed`；
-- context 中的 `source_type`、`source_id`、`skill_ref`、`file`；
+- context 中的 `source_type`、`skill_ref`、`file`；
 - 必填环境配置状态；
 - 代表性只读验证。
 
