@@ -33,6 +33,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let authToken = NSTextField(labelWithString: L10n.text("Not generated"))
     private let oauthPassword = NSTextField(labelWithString: L10n.text("Not generated"))
     private let authReveal = NSButton(title: L10n.text("Show"), target: nil, action: nil)
+    private let copyMCPButton = NSButton(title: L10n.text("Copy MCP"), target: nil, action: nil)
     private let oauthReveal = NSButton(title: L10n.text("Show"), target: nil, action: nil)
     private let startStopButton = NSButton(title: L10n.text("Start service"), target: nil, action: nil)
     private let restartButton = NSButton(title: L10n.text("Restart"), target: nil, action: nil)
@@ -263,6 +264,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         authReveal.bezelStyle = .inline
         authReveal.target = self
         authReveal.action = #selector(toggleAuthToken)
+        copyMCPButton.bezelStyle = .inline
+        copyMCPButton.target = self
+        copyMCPButton.action = #selector(copyMCPDefinition(_:))
         oauthReveal.bezelStyle = .inline
         oauthReveal.target = self
         oauthReveal.action = #selector(toggleOAuthPassword)
@@ -275,7 +279,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         addFullWidth(valueRow(title: L10n.text("Public MCP"), field: publicAddress, actions: [publicTestButton, publicCopyButton]), to: serviceSection)
         addFullWidth(valueDetailRow(publicCheckStatus), to: serviceSection)
         addFullWidth(valueRow(title: "Nexus", field: nexusStateLabel, actions: []), to: serviceSection)
-        addFullWidth(valueRow(title: "Bearer Token", field: authToken, actions: [authReveal, copyButton(#selector(copyAuthToken))]), to: serviceSection)
+        addFullWidth(valueRow(title: "Bearer Token", field: authToken, actions: [authReveal, copyButton(#selector(copyAuthToken)), copyMCPButton]), to: serviceSection)
         addFullWidth(valueRow(title: L10n.text("OAuth password"), field: oauthPassword, actions: [oauthReveal, copyButton(#selector(copyOAuthPassword))]), to: serviceSection)
 
         startStopButton.target = self
@@ -551,6 +555,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func selectCurrentMode(configuration: ServiceConfiguration?) {
+        // LAN 模式没有公网地址，必须先按 host=lan 识别，否则会落进下面的"仅本机"分支。
+        if configuration?.isLANListen == true {
+            initialMode = .lan
+            initialServerURL = ""
+            select(mode: .lan)
+            return
+        }
         guard let publicURL = configuration?.publicURL, !publicURL.isEmpty else {
             initialMode = .local
             initialServerURL = ""
@@ -762,6 +773,28 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         copy(displayedPublicMCPURL?.absoluteString ?? "", button: sender)
     }
     @objc private func copyAuthToken(_ sender: NSButton) { copy(authTokenValue, button: sender) }
+
+    /// 复制可直接粘贴进客户端 mcpServers 的 MCP 定义：
+    /// 局域网模式优先给私网地址（其他设备直连），否则给回环地址。
+    @objc private func copyMCPDefinition(_ sender: NSButton) {
+        guard let configuration = currentStatus.configuration else { return }
+        let url = configuration.lanMCPURLs.first?.absoluteString
+            ?? configuration.localMCPURL?.absoluteString
+        guard let url, !url.isEmpty else { return }
+        let token = authTokenValue.isEmpty ? "<AGENTDOCK_AUTH_TOKEN>" : authTokenValue
+        let definition: [String: Any] = [
+            "mcpServers": [
+                "agentdock": [
+                    "url": url,
+                    "headers": ["Authorization": "Bearer \(token)"]
+                ]
+            ]
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: definition, options: [.prettyPrinted, .sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return }
+        copy(json, button: sender)
+    }
+
     @objc private func copyOAuthPassword(_ sender: NSButton) { copy(oauthPasswordValue, button: sender) }
 
     @objc private func toggleAuthToken() {
