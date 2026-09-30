@@ -1,108 +1,108 @@
 {
   "schema": "llmdoc.meta/v3",
   "baseline": {
-    "revision": "81cfb6e249395908a0dc2687ff5d414d6953853c",
-    "verifiedAt": "2026-09-30T09:35:08.998Z"
+    "revision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a",
+    "verifiedAt": "2026-09-30T10:46:17.033Z"
   },
   "documents": {
     "acp/acp-runtime.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "acp/adapter-compatibility.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "desktop/desktop-runtime.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "desktop/wsl-helper.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "engineering/script-governance.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "engineering/testing-and-ci.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "execution-model.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "nexus/nexus-bridge.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "security/authentication.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "security/configuration.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "security/env-isolation.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "security/path-boundary.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "security/public-artifacts.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "skills/skill-content-model.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "skills/skill-contract.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "task-evolution/evolution-policy.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "task-evolution/task-state.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/add-a-tool.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/context-tools.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/mcp-surface.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/runtime-api.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/tool-runtime.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "update-delivery/install-engine.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "update-delivery/release-integrity.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "update-delivery/update-engine.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "update-delivery/windows-legacy-migration.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/dynamic-mcp.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "host-inputs.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/client-tool-boundary.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "update-delivery/local-macos-build.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "engineering/llmdoc-workflow.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "remote-agent-onboarding.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "nexus/recall-tools.mdx": {
-      "validatedRevision": "81cfb6e249395908a0dc2687ff5d414d6953853c"
+      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     }
   },
   "convergence": {
