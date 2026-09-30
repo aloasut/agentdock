@@ -26,6 +26,10 @@ code:
 - 文件名后缀：`*_windows_test.go` / `*_unix_test.go` / `*_other_test.go` / `*_macos_test.go`；
 - build tag：`//go:build unix`、`browser_integration`；
 - 生产代码同样按 GOOS 拆分（如 `directory_error_windows.go|directory_error_unix.go`）。
+- **控制面板 C#/WPF 没有编译门禁**（CI 之外多数环境无 dotnet，含本仓库开发机）：改
+  `desktop/windows/control-panel/` 后，Go 侧用 `GOOS=windows go build/vet` 验证，C# 侧
+  人工复核类型签名、record 构造点与 resx key（动态查找无需代码生成），并在汇报中明确
+  "C# 未编译、留人工复核"。
 
 ## 门禁组成
 

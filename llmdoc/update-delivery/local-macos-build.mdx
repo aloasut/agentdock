@@ -1,0 +1,64 @@
+---
+description: "本机编译 macOS App（非发布流水线）操作指南：离线载荷组装（各架构 Go core+core-skills+cloudflared+sha256）、build-app.sh 环境变量（OFFLINE_PAYLOAD_DIR/ARCHES/MIN_VERSION）、Universal 双架构 lipo 校验、ad-hoc 签名边界、dist 产物位置 / local build, macos app, universal, offline payload, dist macos-app"
+kind: guide
+relations:
+  related:
+    - update-delivery/release-integrity.mdx
+code:
+  paths:
+    - packaging/macos/build-app.sh
+    - packaging/build-core-skill-bundle.py
+    - .github/workflows/release.yml
+---
+
+# 本机构建 macOS App（不走发布流水线）
+
+## 触发与边界
+
+在本机出可安装/可测试的 `AgentDock.app`（含最新功能代码、Intel/Apple Silicon 均可）时用本流程。
+**正式发布**走 `release.yml`（verify-dist/签名/基址改写，见 release-integrity）——本流程产物
+只做 **ad-hoc 签名**（默认 `AGENTDOCK_CODESIGN_IDENTITY="-"`），可本机运行，不可对外分发。
+
+## 步骤（与 release.yml darwin job 同构）
+
+1. **按架构编译 Go Core**（版本信息经 ldflags 注入，产物进 `dist/bin/`）：
+
+   ```sh
+   CGO_ENABLED=0 GOOS=darwin GOARCH=<arm64|amd64> \
+     go build -trimpath \
+     -ldflags="-s -w -X github.com/uvwt/agentdock/internal/buildinfo.Commit=$(git rev-parse HEAD) \
+       -X github.com/uvwt/agentdock/internal/buildinfo.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+     -o dist/bin/agentdock ./cmd/agentdock
+   ```
+
+2. **core-skills bundle**：`python3 packaging/build-core-skill-bundle.py --output dist/share/agentdock/core-skills`。
+3. **组装离线载荷目录**（例 `dist/payload/`，每架构必备 4 件）：
+   - `agentdock_darwin_<goarch>.tar.gz`（内容 `bin/agentdock` + `share/agentdock/core-skills`，在 `dist/` 上层打 tar）+ `.sha256`；
+   - `cloudflared_darwin_<goarch>`（从 cloudflared latest release 下载 tgz 解出，0755）+ `.sha256`。
+   注意命名映射：x86_64 芯片 ↔ goarch `amd64`。
+4. **跑打包脚本**（Intel 双架构加 `AGENTDOCK_MACOS_ARCHES=arm64,x86_64`）：
+
+   ```sh
+   AGENTDOCK_MACOS_OFFLINE_PAYLOAD_DIR="$PWD/dist/payload" \
+   AGENTDOCK_MACOS_ARCHES=arm64,x86_64 \
+   packaging/macos/build-app.sh
+   ```
+
+## 产物与验证
+
+- 产物在 `dist/macos-app/`：`AgentDock.app` + 更新 ZIP + DMG（各带 .sha256）。
+  `dist/` 已 gitignore；`make clean-local-artifacts` 清理。
+- **Universal 必查内嵌二进制**（只查 App 壳会漏掉 Helpers）：
+  `lipo -archs` 应对 `Contents/MacOS/AgentDock`、`Contents/Helpers/{agentdock,cloudflared,agentdock-arbiter}`
+  全部显示 `x86_64 arm64`；`codesign --verify --deep --strict` 通过。
+- 脚本内置校验：载荷 checksum、架构匹配、core-skills 跨架构一致、plutil lint、嵌套签名后整体 verify。
+- 最低系统默认 macOS 13.0（`AGENTDOCK_MACOS_MIN_VERSION` 可调）。
+
+## 本机环境注意
+
+- **本机没有 dotnet**：Windows 控制面板（C#/WPF）改动无法本机编译验证——用
+  `GOOS=windows go build/vet` 验 Go 侧 + 人工复核 C# 签名与调用匹配（见 testing-and-ci）。
+- Swift 改动验证：`xcrun swiftc -typecheck -swift-version 5 -target arm64-apple-macosx13.0
+  -sdk "$(xcrun --sdk macosx --show-sdk-path)" desktop/macos/AgentDockApp/Sources/*.swift`。
+- 重建后若要让 launchd 常驻 Core 用上新代码：经桌面 App 更新/重装，或重启服务
+  （`agentdock service restart`）——Core 是安装时落盘的二进制，不是构建产物热替换。

@@ -1,0 +1,55 @@
+---
+description: "本仓库 llmdoc 维护操作指南：new/adopt/init-state/validate/commit 顺序、commit --all 的未跟踪目录陷阱（先手动提交正文再刷指纹）、映射代码 dirty 挡指纹提交（fail-closed 预检）、MDX 正文禁裸花括号、检索验收探针方法（描述须覆盖用户问法词汇）/ llmdoc maintenance, bootstrap, fingerprint, retrieval probes, context floor"
+kind: guide
+code:
+  paths: []
+---
+
+# 本仓库 llmdoc 维护工作流
+
+日常检索用 `npx -y @tokenroll/llmdoc`（tree/search/context/show）；本页只记 **改知识面**
+的流程与实测踩过的 CLI 陷阱。命令一律 `npx -y @tokenroll/llmdoc <cmd>`（外部工具，不进 package.json）。
+
+## 标准顺序
+
+1. **新增文档**：`new <path> --kind <guide|reference|architecture> --description "..."`——
+   首个文档会自动建 `llmdoc/`；之后每个 `new` 都会自动登记进账本
+   （已存在于磁盘的 .mdx 用 `adopt <path...>`，绝不删了重建）。
+2. **写正文**（recorder 职责）：先读 `~/.zcode/skills/llmdoc/references/knowledge-topology.md`
+   的骨架与门禁；description 是检索入口，按下面"验收"标准写。
+3. `validate` 过后做 **Context Floor 验收**（见下）。
+4. `commit --all -m "docs(llmdoc): ..."`——正文提交 + 指纹刷新一次完成。
+
+bootstrap 场景（全新 llmdoc/）才有 `init-state`：它要求 `llmdoc/` 已存在——**先 `new` 再
+`init-state`**，顺序反了会报 "No llmdoc/ directory"。
+
+## 实测陷阱（每条都真实咬过人）
+
+1. **`commit --all` 的未跟踪目录陷阱**：整个 `llmdoc/` 首次未跟踪时，git porcelain 折叠成
+   单行 `?? llmdoc/`，CLI 的 `.mdx` 过滤失配 → 只落指纹 meta 提交、正文全留未跟踪。
+   修复：先手动 `git add llmdoc && git commit -m ...`，再 `commit --all` 刷指纹。
+   判别信号：commit 输出只有 `committed: xxxxxxx (meta)` 而没有 `(docs)`。
+2. **映射代码 dirty 挡指纹提交（fail-closed，不是 bug）**：文档 `code.paths` 指向的文件
+   未提交时，`commit` 预检拒绝推进指纹（"Cannot advance revisions while mapped code is
+   dirty"）。正确顺序永远是 **先提交功能代码，再提交文档**。
+3. **MDX 正文禁止裸花括号**：`{...}` 被当 JS 表达式，validate 报
+   `mdx.syntax.forbidden`。列举集合改用反引号代码或改写成"取值 a/b/c"。
+4. **description 必须覆盖用户的问法词汇**，不只是主题词：实测"会读取哪些**外部**文件"
+   被 ACP 短文档的词频压过，补"本机/机器"后稳定第一名。写完必须做验收（下节）。
+
+## Context Floor 验收（validate 只保证结构，不保证可达）
+
+- **概念探针**：每个新主题出 2-4 个自然问法（中文为主、含一个不重复标题的表述），
+  `search "<问法>" --limit 2`——预期 owner 必须 **第一名**；被压第二就改 description 词汇。
+- **文件路由探针**：每个映射的入口/叶子文件跑 `context --files <path>`——owner 出现即可
+  （与相邻 owner 成 union 正常）；零结果 = 路由缺口。
+- **精确度**：`code.paths` 全部用精确路径（本仓库不用通配符，探针豁免）。
+- 探针输出格式注意：search 结果行以 `llmdoc/` 开头；context 结果有缩进，
+  `grep -E '^llmdoc/'` 会漏，用 `grep -oE 'llmdoc/[a-z/-]+\.mdx'`。
+
+## 维护纪律
+
+- 知识变更（代码语义变了/文档该改）→ `/llmdoc:update`；收敛冗余 → `/llmdoc:prune`。
+- `.llmdoc-tmp/` 是调查暂存区（investigator 报告、矩阵），不提交、可随时删。
+- 本页不写具体文档清单（那是 `tree --docs` 的 live fact）；本页无 code.paths——
+  它锚定的是流程而非源码，改 CLI 行为类陷阱时同步更新本页。

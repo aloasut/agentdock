@@ -1,0 +1,62 @@
+---
+description: "为外部编码代理（Codex 等）编写项目 AGENTS.md 以经 AgentDock 协作开发的方法论：方向声明（谁的本地工具看不到代码）、工具路由表压制内置优先、最小环境白名单的 PATH 陷阱（cargo/node 写绝对路径）、异步会话与无沙箱红线、项目自有 AGENTS.md 优先、连通性验证（带 token initialize 200/无 401）/ remote codex, AGENTS.md, agents md template, remote development, tool routing"
+kind: guide
+relations:
+  related:
+    - tool-system/client-tool-boundary.mdx
+    - security/env-isolation.mdx
+    - security/authentication.mdx
+code:
+  paths:
+    - internal/agentinstructions/instructions.go
+    - internal/app/workspace_context.go
+---
+
+# 远程编码代理接入（AGENTS.md 方法论）
+
+让外部编码代理（Codex 等）通过 AgentDock 开发某个项目时，为其编写项目 `AGENTS.md`。
+典型方向两种：**Codex 在本机、AgentDock 在远端**（操作远端机器）；**Codex 在远端
+Linux、AgentDock 在本机**（远端代理连回来操作本机）。方法论双向通用。
+发现机制基础：AgentDock 的 `workspace_context` 会自动发现工作区 AGENTS.md 继承链
+（tool-system/context-tools），所以这份文件对任何经 AgentDock 连入的代理都生效。
+
+## 模板与实例
+
+- 模板（含完整骨架）：本机 `dist/AGENTS.remote-project.md`；
+- 实例：`dist/AGENTS.san-action.md`（Cocos 项目）、`dist/AGENTS.p2wlan-remote.md`（远端
+  Codex 连回本机）。**dist/ 不进 git 且实例含机器名/路径等隐私**——模板内容以本页为准沉淀，
+  实例只在本机留档，不复制进仓库或对方仓库的公开文档。
+
+## 必写七要素
+
+1. **方向声明（放最前）**：项目真实位置（谁的磁盘、绝对路径）、代理在哪、本地工作目录
+   只是锚点（"没有代码副本，禁止本地找代码/禁止 git init"）。
+2. **工具路由表**：逐任务指定 agentdock 工具（read_file/file_edit/exec_command/
+   session_observe/session_act/view_image/browser_*），并**显式禁止本地对应工具**——
+   模型默认偏内置，不压住就会在本地空转。例外清单：读 AGENTS.md 本身、规划、检索公开资料。
+3. **执行语义**（契约见 execution-model 与 tool-runtime）：
+   - 路径一律用项目所在机器的绝对路径（相对路径落到 `~/AgentDock` 默认目录）；
+   - 命令异步：`exec_command` 长任务返回 running session，`session_observe` 轮询、
+     `session_act` 停止；`timeout_ms` 上限 24h；
+   - 输出 4MiB 截断：大日志重定向 /tmp 再 read_file 或 grep；
+   - **无沙箱红线**：以服务 OS 用户全权限运行——破坏性操作先确认、禁止 `rm -rf` 不确定路径、
+     改前 `git status`、每次 `file_edit` 后回读验证；
+   - 连接故障不循环重试，提示检查服务与 MCP 定义，禁止把错侧路径拼进参数。
+4. **PATH 陷阱（最容易翻车）**：AgentDock 子进程是最小环境白名单（security/env-isolation），
+   launchd/服务环境 PATH 极短——`node`/`cargo`/`pyenv shims` 等用户级工具 **不可见**
+   （实测：`/usr/local/bin/node`、`/Users/<user>/.cargo/bin/cargo` 都会 command not found）。
+   命令必须写绝对路径或前缀 `PATH=...`；在目标机上用最小 PATH 实测后写死。
+5. **项目自有约束优先**：项目仓库自带 AGENTS.md/skills/docs 时，规定第一步先 `read_file`
+   读它们，且优先级高于本文件；本文件只做传输层与路由。
+6. **常用命令落地**：构建/测试/验证命令按实际环境写好（含绝对路径），不让代理猜。
+7. **汇报约定**：改动文件（项目机绝对路径）+ 验证输出关键行 + 未完成事项及原因。
+
+## 部署与验证
+
+- **部署位置**：代理侧的工作目录根（Codex 读自己 cwd 的 AGENTS.md）；若项目代码侧也要
+  生效（经 workspace_context 发现），同文件放项目根。
+- **连通性验证**（部署后必做）：从代理机 `curl http://<agentdock>:<port>/healthz` 通；
+  `/mcp` **无 token 401、带 token initialize HTTP 200**（认证门正常且凭据有效）。
+  Codex 配置在 `~/.codex/config.toml` 的 `[mcp_servers.agentdock]`（url + http_headers）。
+- 客户端内置工具与 MCP 工具的取舍（何时该压内置、Mac 专属任务只有 MCP 可达）见
+  tool-system/client-tool-boundary。

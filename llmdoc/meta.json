@@ -91,6 +91,15 @@
     },
     "tool-system/client-tool-boundary.mdx": {
       "validatedRevision": "98df102bc02b7a0e4fda28fee0525f44ba5a52ce"
+    },
+    "update-delivery/local-macos-build.mdx": {
+      "validatedRevision": null
+    },
+    "engineering/llmdoc-workflow.mdx": {
+      "validatedRevision": null
+    },
+    "remote-agent-onboarding.mdx": {
+      "validatedRevision": null
     }
   },
   "convergence": {
