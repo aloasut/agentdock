@@ -17,6 +17,7 @@ code:
 `Dispatch` 路由，**传输无关**：HTTP（`/internal/runtime/*`）与 Nexus Bridge（桌面控制面/远端节点）
 都只依赖这份契约；两条路径最终与模型工具汇入同一份公共实现（`internal/app/runtime_api.go`）。
 改工具语义时先查这里，避免 HTTP 与 Nexus 行为分叉。
+`GET /internal/runtime/overview` 是给控制面的轻量投影（任务计数等），不是第二套完整状态接口。
 
 ## 请求纪律（不变量）
 

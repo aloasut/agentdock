@@ -37,8 +37,9 @@ code:
   （任一 bind 失败即启动失败，不留下半监听状态）；关闭时全部 listener 限时 Shutdown。
 - 设置 `AGENTDOCK_RUNTIME_ROOT` 时，`httpx.Serve` 与 `desktopcontrol.Serve`
   **同生命周期并行**，任一退出即 cancel 另一个（禁止后台只剩半套控制面）。
-- 存在配对身份时另起 nexusbridge goroutine；`bridgeWG.Wait()` 必须先于 `Runtime.Close`
-  —— Bridge 必须先 drain 再关 Runtime。
+  同一 runtime root 还按服务模式决定是否拉起 Tailcat 服务器（契约见 nexus/tailcat-dial-in）。
+- 存在配对身份时另起 nexusbridge goroutine。Tailcat 服务器与这条桥共用 `bridgeWG`；
+  `bridgeWG.Wait()` 必须先于 `Runtime.Close`——Bridge 必须先 drain 再关 Runtime。
 
 ## Runtime.Close 次序（不变量）
 

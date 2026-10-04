@@ -1,5 +1,5 @@
 ---
-description: "发布完整性操作指南：release tag 必须等于 buildinfo.Version、verify-dist 发布产物资产齐全目录、sha256 校验和格式、Windows Authenticode 与 cloudflared 签名、install.sh 基址改写为固定 tag URL、Docker 四变体、core-skills bundle CRLF 归一 / release, verify-dist, signing, checksum, docker variants"
+description: "发布完整性操作指南：release tag 必须等于 buildinfo.Version、verify-dist 发布产物资产齐全目录、sha256 校验和格式、Windows Authenticode 与 cloudflared 签名、install.sh 基址改写为固定 tag URL、Docker 四变体、core-skills bundle CRLF 归一、R2 只镜像当前稳定版 / release, verify-dist, signing, checksum, docker variants, r2 mirror"
 kind: guide
 relations:
   related:
@@ -9,6 +9,7 @@ code:
     - tools/release/main.go
     - tools/release/catalog.go
     - .github/workflows/release.yml
+    - docs/release-distribution.md
     - packaging/windows/sign-windows.ps1
     - packaging/build-core-skill-bundle.py
 ---
@@ -39,6 +40,13 @@ amd64+arm64、`AgentDock-macos-universal.dmg`、`AgentDockSetup-{amd64,arm64}.ex
 发布时把 `install.sh` 默认 latest 下载基址 **改写为本次 tag 的固定 URL**——bootstrap 可复现，
 不被后续 release 影响。Windows job 下载并校验"确切字节的 installer"、standard user 冒烟、
 签名并 verify、打包含 shims/arbiter/wsl-helper/manage-windows.ps1/share 的 ZIP。
+
+## 最新版镜像
+
+GitHub Release 仍是唯一历史档案。发布成功之后才把**当前稳定版**镜像到 Cloudflare R2，给
+NexusDock 下载域名用。R2 不保留历史版本。版本化对象校验通过后才更新 `latest.json`；在此之前
+失败，旧下载入口保持不变。镜像里的 `install.sh` 会把下载基址改到该版本的公开 URL，GitHub
+Release 里的 `install.sh` 不改。对象布局和凭据见 `docs/release-distribution.md`。
 
 ## Docker 变体
 

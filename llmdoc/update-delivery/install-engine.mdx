@@ -45,9 +45,13 @@ code:
 脚本只做 UAC/DPAPI/session 适配（治理清单 scripts/governance/inventory.yaml 约束公开入口，
 见 engineering/script-governance）：
 
-- `install.sh`：Unix 公开 bootstrap——平台/架构识别、Release 下载校验，随后交给 `agentdock install`
-  （Go Engine 是唯一权威）；支持卸载转发。
-- `install.ps1`：Windows 公开 bootstrap / Inno Setup 契约（`-InstallChannel script|setup`）；
+- `install.sh`：Unix 公开 bootstrap。首次安装按 Core → NexusDock → 可选 Cloudflare Tunnel
+  分阶段走；中断后的下一次运行整套重来，用 runtime 下的 `.installer-onboarding` 记住「还没装完」，
+  不因为 stable binary 已在就当成普通升级。隧道选项仍是 `none` / `quick` / `named`。
+  Go Engine 仍是服务状态的唯一权威。
+- `install.ps1`：Windows 公开 bootstrap / Inno Setup 契约（`-InstallChannel script|setup`）。
+  交互式「无域名」写入 `tailcat`，不注册 cloudflared；已保存的 `quick` 重装时原样复用。
+  模式语义见 nexus/tailcat-dial-in。
   `Invoke-SetupRuntimeProcess` 借 shim 的 `--setup-runtime-host` 穿透 Inno 6.7+ RedirectionGuard
   进程树（见 desktop/desktop-runtime 的 shim 模式）。
 

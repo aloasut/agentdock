@@ -1,0 +1,65 @@
+---
+description: "Tailcat 拨入 owner：服务模式 tailcat 取代桌面临时地址、本机跑 Tailcat 服务器而 NexusDock 拨入、连接串按密码保管、409 TAILCAT_NODE_DIAL 才把出站改成 30 秒探测、已保存的 quick 不自动迁移 / tailcat, dial-in, connection string, temporary address, quick tunnel, node.hello"
+kind: architecture
+relations:
+  related:
+    - nexus/nexus-bridge.mdx
+    - desktop/desktop-runtime.mdx
+    - execution-model.mdx
+    - update-delivery/install-engine.mdx
+code:
+  paths:
+    - internal/tailcatnode/runtime.go
+    - internal/tailcatnode/runtime_test.go
+    - internal/tailcatnode/mode.go
+    - internal/tailcatnode/config.go
+    - internal/tailcatnode/files.go
+    - internal/tailcatnode/unpaired.go
+    - internal/tailcatnode/doc.go
+    - internal/secretredact/redact.go
+    - internal/nexusbridge/client.go
+    - internal/nexusbridge/connection_state.go
+    - internal/desktopruntime/tunnel_tailcat.go
+---
+
+# Tailcat 拨入（取代临时地址）
+
+## 谁拨谁
+
+已配对的 AgentDock 在服务模式 `tailcat` 时运行自己的 Tailcat **服务器**。管理员把连接串和隧道内 TCP 端口交给 NexusDock，Nexus 作为 Tailcat **客户端**拨进来，并在这条 TCP 上升级成现有节点 WebSocket。
+
+没有在 Nexus 保存连接串时，什么都不要改：AgentDock 继续作为 WebSocket 客户端，带着 Device Token 去连 Nexus 的 `GET /v1/nodes/connect`。不要让 Nexus 拨 AgentDock 的公网 URL，也不要把 `/mcp` Token 交给 Nexus。节点仍然先发 `node.hello`。配对和 Device Token 的单一来源见 nexus/nexus-bridge。
+
+## 模式开关
+
+持久化的模式字符串**恰好**是 `tailcat` 才启动服务器。已保存的 `quick` 继续走 cloudflared；打开应用或把界面显示成 Tailcat，都不会把它改写，也不会停掉临时隧道。下次由用户应用，才写入 `tailcat` 并停掉 cloudflared。
+
+Windows 安装程序「保留设置」原样保留 `quick`。交互式「无域名」和 Setup 连接页的对应选项现在是 `tailcat`。Unix `install.sh` 的隧道选项仍是 `none` / `quick` / `named`，不提供 tailcat。
+
+`tailcat` 不写 `AGENTDOCK_SERVER_URL`，不因此打开 OAuth，也不发布公网 MCP 地址。默认隧道内端口是 80：不是 DERP 端口，也不是本机 HTTP 端口。允许名单为空时，持有连接串的客户端都能进；非空时必须包含 Nexus 对话框里那把出站公钥（`nodekey:` 加十六进制），否则拨不进。重置连接串才旋转密钥和已钉选的 DERP；再次应用同一模式不旋转。
+
+## 库与进程边界
+
+使用 `github.com/tailscale/tailcat` v0.7.0。只有 `internal/tailcatnode/runtime.go` 可以导入这个库和 `tailscale.com`。`Server.Start` 只能调用一次，`Close` 之后必须换新实例。库引擎使用 `ListenPort: 0` 并关闭 netns，所以本进程只跑这一个 Server。DERP 暂时不可达只记在状态里并退避，不让 AgentDock 进程退出。
+
+## 地址和密钥
+
+身份在 `<runtime>/tailcat/key.json`，DERP 钉选在同目录 `region.json`，都是 0600。首次成功监听后把连接串里的 DERP 区域钉住，以后启动沿用，避免连接串变化。钉选损坏则拒绝启动，不另造一把地址。连接串按密码保管：日志抹掉 `psk:`、`privkey:` 和长度不少于 16 的 `tc` token。`tailcat-status.json` 只给本机控制面，不能写进 slog。
+
+`ServedTCPPorts` 只放行配置的那一个端口。名单为空时隧道可以起来，但 Nexus 没有端口可拨，节点会一直离线。
+
+## 拨入之后的 WebSocket
+
+Nexus 访问 `ws://agentdock.tailcat/v1/nodes/connect`。Host 只是标签，连接串不得进入 URL。监听必须接受这个 Host、缺失的 `Origin` 和缺失的 `Authorization`；`CheckOrigin` 恒为真。传输认证是连接串里的预共享密钥。应用身份仍是 `hello.device_id`，必须等于配对时的设备 ID。
+
+未配对时可以先把服务器拉起来，方便复制连接串，但该路径返回 503，不发假 hello。升级成功后立刻写和出站相同的 `node.hello`：协议版本 `"2"`，没有 UI 资源时 `ui_resources` 必须是空数组。等 `node.ready` 的期限是 15 秒。之后的读超时是两个心跳；心跳间隔沿用 ready 里的值，缺省 30 秒。
+
+## 和出站怎么切换
+
+Nexus 保存连接串之后，这台节点再去连出站 `GET /v1/nodes/connect`，会在升级前得到 HTTP 409，错误码 `TAILCAT_NODE_DIAL`。只有这时出站才改为 30 秒探测，不再从 1 秒开始猛连。本地仅仅处于 tailcat 模式不会停出站，因为连接串保存在 Nexus。清空连接串或禁用节点后，探测成功应恢复原来的 Device Token 出站。
+
+入站和出站用会话计数表示已连接。409 探测不得把仍活着的入站标成断开，出站 `connect` 入口也不要把连接状态清掉。
+
+一条 WebSocket 在本地结束时必须关掉 TCP，Nexus 才能立刻区分两种重连：撑过一个心跳的断开会马上重拨，并且沿用原来的 Tailcat 客户端；没撑过的走 1 秒起、加倍、上限 30 秒的退避。写锁和取消表按会话分开。马上重拨时新旧两条连接会重叠，旧连接的写超时不能挡住新的 `node.hello`。单条 WebSocket 断开不重启 Tailcat 服务器，所以这种重拨不必重新 meow。
+
+Tailcat 进程或 Server 重启会清空内存里的对等表。库在客户端第一次 meow 成功后会把握手标记粘住。Nexus 在拨号、WebSocket 或 hello 失败后丢掉当前客户端，下一次才重新 meow 并登记。AgentDock 侧每次启动都是新的 Server 实例。

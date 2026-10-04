@@ -39,7 +39,7 @@ Windows 命名管道（current-user ACL，名字含 runtime_root 哈希）。消
 
 ## runtime.json manifest（桌面安装的权威描述）
 
-schema v1：安装根、二进制路径、端口、tunnel mode `none|quick|named`、privilege_mode
+schema v1：安装根、二进制路径、端口、tunnel mode `none|quick|tailcat|named`、privilege_mode
 `standard|elevated`+计划任务名。不变量：
 
 - generation core 必须通过 `active-version.json` 归属校验才能读 manifest（防任意旧 generation
@@ -49,8 +49,10 @@ schema v1：安装根、二进制路径、端口、tunnel mode `none|quick|named
 
 ## 连接模式（连接选项如何落到配置）
 
-macOS 安装器的连接选项是 `TunnelMode`：`local(none) / lan / quick / named`，持久化在 tunnel env 的
-`AGENTDOCK_TUNNEL_MODE`。`lan` 模式不启用 tunnel，而是把 Core env 的 `AGENTDOCK_HOST` 写为
+macOS 安装器的连接选项是 `TunnelMode`：`local(none) / lan / tailcat / named`。持久化值还可以是旧的
+`quick`：它仍启动 cloudflared，打开应用不会把它改成 `tailcat`。控制面把已保存的 `quick` 显示为 Tailcat，
+下次应用才写入 `tailcat` 并停掉临时隧道。`tailcat` 不发布公网 MCP，拨入契约见 nexus/tailcat-dial-in。
+`lan` 模式不启用 tunnel，而是把 Core env 的 `AGENTDOCK_HOST` 写为
 `lan`（多网段监听语义见 security/configuration）；读回时 tunnel mode=lan ↔ host=lan 互相印证。
 Windows 侧经 `agentdock config update --listen loopback|lan` 持久化到控制面板 settings，
 `platformPrepareCoreEnvironment` 按 settings 解析 `AGENTDOCK_HOST`。
