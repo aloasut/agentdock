@@ -12,22 +12,22 @@
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "desktop/desktop-runtime.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "desktop/wsl-helper.mdx": {
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "engineering/script-governance.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "engineering/testing-and-ci.mdx": {
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "execution-model.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "nexus/nexus-bridge.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "security/authentication.mdx": {
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
@@ -66,16 +66,16 @@
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/runtime-api.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "tool-system/tool-runtime.mdx": {
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "update-delivery/install-engine.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "update-delivery/release-integrity.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "update-delivery/update-engine.mdx": {
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
@@ -84,7 +84,7 @@
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/dynamic-mcp.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "host-inputs.mdx": {
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
@@ -93,19 +93,19 @@
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "update-delivery/local-macos-build.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "engineering/llmdoc-workflow.mdx": {
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "remote-agent-onboarding.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "nexus/recall-tools.mdx": {
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "nexus/tailcat-dial-in.mdx": {
-      "validatedRevision": null
+      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     }
   },
   "convergence": {
