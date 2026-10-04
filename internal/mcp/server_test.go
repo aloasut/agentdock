@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -54,6 +55,24 @@ func assertToolAnnotation(t *testing.T, descriptor map[string]any, readOnly, des
 	assertBoolPointer("openWorldHint", openWorld)
 }
 
+func TestOpenAIReviewedToolDescriptorsMatchBehavior(t *testing.T) {
+	browser := toolDescriptorsForConfig(t, []string{"browser_snapshot"}, config.Config{BrowserEnabled: true})[0]
+	assertToolAnnotation(t, browser, false, false, true)
+
+	plugin := toolDescriptorsForConfig(t, []string{"plugin_manage"}, config.Config{})[0]
+	description, _ := plugin["description"].(string)
+	for _, forbidden := range []string{"Git", "catalog"} {
+		if strings.Contains(description, forbidden) {
+			t.Fatalf("plugin_manage description still claims unsupported %s behavior: %q", forbidden, description)
+		}
+	}
+	for _, required := range []string{"local Plugin directories", "ZIP archives", "Remote sources must be fetched locally"} {
+		if !strings.Contains(description, required) {
+			t.Fatalf("plugin_manage description missing %q: %q", required, description)
+		}
+	}
+}
+
 func TestFilePublishDescriptorExposesFileRewritePath(t *testing.T) {
 	descriptors := toolDescriptorsForConfig(t, []string{"file_publish"}, config.Config{})
 	byName := map[string]map[string]any{}
@@ -80,8 +99,21 @@ func TestOpenAIFileMetadataMatchesDeclaredSchemas(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s file input path %q missing from input schema", def.Name, path)
 			}
-			if property["type"] != "string" || property["format"] != "binary" {
-				t.Fatalf("%s file input %q must be string/binary: %#v", def.Name, path, property)
+			if property["type"] != "object" {
+				t.Fatalf("%s file input %q must be an object: %#v", def.Name, path, property)
+			}
+			properties, ok := property["properties"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s file input %q properties = %#v", def.Name, path, property["properties"])
+			}
+			for _, key := range []string{"download_url", "file_id", "file_name", "mime_type"} {
+				if _, ok := properties[key]; !ok {
+					t.Fatalf("%s file input %q missing documented property %q", def.Name, path, key)
+				}
+			}
+			required, ok := property["required"].([]string)
+			if !ok || !slices.Contains(required, "download_url") || !slices.Contains(required, "file_id") {
+				t.Fatalf("%s file input %q required = %#v", def.Name, path, property["required"])
 			}
 		}
 		if len(def.FileArgRewritePaths) > 0 {
