@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/uvwt/agentdock/internal/tailcatnode"
 )
 
 func platformConfigureTunnel(ctx context.Context, request TunnelConfigureRequest) error {
@@ -69,6 +71,23 @@ func platformConfigureTunnel(ctx context.Context, request TunnelConfigureRequest
 			return err
 		}
 		if err := runtime.updateManifest("none", ""); err != nil {
+			return err
+		}
+		if err := platformSetTunnelAutostart(ctx, runtime.root, false); err != nil {
+			return err
+		}
+		return platformServiceAction(ctx, runtime.root, "restart")
+	case "tailcat":
+		if err := tailcatnode.EnsureConfig(runtime.root, request.TailcatPort, request.TailcatAllow, request.TailcatAllowSet); err != nil {
+			return err
+		}
+		if err := writeRuntimeText(runtime.files.mode, "tailcat"); err != nil {
+			return err
+		}
+		if err := clearActivePublicURL(runtime.files); err != nil {
+			return err
+		}
+		if err := runtime.updateManifest("tailcat", ""); err != nil {
 			return err
 		}
 		if err := platformSetTunnelAutostart(ctx, runtime.root, false); err != nil {

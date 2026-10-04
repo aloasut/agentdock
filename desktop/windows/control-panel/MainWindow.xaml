@@ -93,9 +93,9 @@
                 </Grid.RowDefinitions>
                 <TextBlock Text="{local:Loc LocalMCP}" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <TextBox x:Name="LocalMcpTextBox" Grid.Column="1" Grid.ColumnSpan="2" IsReadOnly="True" Margin="0,0,0,10" />
-                <TextBlock Text="{local:Loc PublicMCP}" Grid.Row="1" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <TextBlock x:Name="PublicAddressLabel" Text="{local:Loc PublicMCP}" Grid.Row="1" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <TextBox x:Name="PublicMcpTextBox" Grid.Row="1" Grid.Column="1" IsReadOnly="True" Margin="0,0,8,10" />
-                <Button Grid.Row="1" Grid.Column="2" Content="{local:Loc Test}" Click="TestPublicButton_Click" />
+                <Button x:Name="PublicAddressActionButton" Grid.Row="1" Grid.Column="2" Content="{local:Loc Test}" Click="TestPublicButton_Click" />
                 <TextBlock Text="{local:Loc PublicCheck}" Grid.Row="2" VerticalAlignment="Center" />
                 <TextBlock x:Name="PublicTestStatusText" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{local:Loc NotChecked}" TextWrapping="Wrap" />
               </Grid>
@@ -133,8 +133,8 @@
                 <TextBlock Text="{local:Loc LocalOnlyDescription}" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
                 <RadioButton x:Name="LanModeRadio" GroupName="TunnelMode" Content="{local:Loc LanAccess}" Tag="lan" Margin="0,0,0,10" Checked="TunnelModeRadio_Checked" />
                 <TextBlock Text="{local:Loc LanAccessDescription}" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
-                <RadioButton x:Name="QuickModeRadio" GroupName="TunnelMode" Content="{local:Loc TemporaryAddress}" Tag="quick" Margin="0,0,0,10" Checked="TunnelModeRadio_Checked" />
-                <TextBlock Text="{local:Loc TemporaryAddressDescription}" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
+                <RadioButton x:Name="TailcatModeRadio" GroupName="TunnelMode" Content="{local:Loc Tailcat}" Tag="tailcat" Margin="0,0,0,10" Checked="TunnelModeRadio_Checked" />
+                <TextBlock Text="{local:Loc TailcatDescription}" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
                 <RadioButton x:Name="NamedModeRadio" GroupName="TunnelMode" Content="{local:Loc CustomDomain}" Tag="named" Margin="0,0,0,10" Checked="TunnelModeRadio_Checked" />
                 <TextBlock Text="{local:Loc CustomDomainDescription}" Foreground="#667085" Margin="24,-8,0,4" TextWrapping="Wrap" />
               </StackPanel>
@@ -160,9 +160,36 @@
               </Grid>
             </GroupBox>
 
+            <GroupBox x:Name="TailcatGroup" Header="{local:Loc TailcatConfiguration}">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="150" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="{local:Loc TailcatPort}" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <TextBox x:Name="TailcatPortTextBox" Grid.Column="1" Width="130" HorizontalAlignment="Left" Margin="0,0,0,10" />
+                <TextBlock Text="{local:Loc TailcatAllow}" Grid.Row="1" VerticalAlignment="Top" Margin="0,4,0,10" />
+                <TextBox x:Name="TailcatAllowTextBox" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" AcceptsReturn="True" TextWrapping="Wrap" Height="72" Margin="0,0,0,10" />
+                <TextBlock Text="{local:Loc TailcatConnectionString}" Grid.Row="2" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <TextBox x:Name="TailcatAddressTextBox" Grid.Row="2" Grid.Column="1" IsReadOnly="True" Margin="0,0,8,10" />
+                <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal" Margin="0,0,0,10">
+                  <Button x:Name="ToggleTailcatAddressButton" Content="{local:Loc Show}" Click="ToggleTailcatAddressButton_Click" />
+                  <Button Content="{local:Loc Copy}" Click="CopyTailcatAddressButton_Click" />
+                </StackPanel>
+                <TextBlock x:Name="TailcatHelpText" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Text="{local:Loc TailcatAllowHelp}" Foreground="#667085" TextWrapping="Wrap" />
+              </Grid>
+            </GroupBox>
+
             <StackPanel Orientation="Horizontal">
               <Button Content="{local:Loc ApplyAccessMode}" Click="ApplyTunnelModeButton_Click" />
-              <Button x:Name="RegenerateQuickButton" Content="{local:Loc RegenerateTemporaryAddress}" Click="RegenerateQuickButton_Click" />
+              <Button x:Name="ResetTailcatButton" Content="{local:Loc ResetTailcatConnection}" Click="ResetTailcatButton_Click" />
             </StackPanel>
             <TextBlock x:Name="TunnelActionStatusText" Foreground="#475467" TextWrapping="Wrap" Margin="0,6,0,0" />
           </StackPanel>

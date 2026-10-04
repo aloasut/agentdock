@@ -59,18 +59,21 @@ func TestWindowsTunnelLifecycleTestsIsolateAgentDockHome(t *testing.T) {
 	}
 }
 
-func TestDesktopControlSurfacesCanRefreshQuickTunnel(t *testing.T) {
+func TestDesktopControlSurfacesExposeTailcat(t *testing.T) {
 	checks := map[string][]string{
 		filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"): {
-			"RegenerateQuickButton_Click",
-			"RegenerateQuickTunnelAsync",
-			`UiText.Get("OldAddressHidden")`,
-			"PublicMcpTextBox.Text = \"\"",
+			"ResetTailcatButton_Click",
+			"TailcatModeRadio",
+		},
+		filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"): {
+			"ResetTailcatConnectionAsync",
+			"--tailcat-port",
+			"--tailcat-allow-set",
 		},
 		filepath.Join("..", "..", "desktop", "macos", "AgentDockApp", "Sources", "SetupWindowController.swift"): {
-			"refreshingQuickTunnel",
-			`L10n.text("Regenerate temporary address")`,
-			`L10n.text("Generating a new temporary public address…")`,
+			`L10n.text("Tailcat")`,
+			`L10n.text("Reset connection string")`,
+			"regenerateTailcat",
 		},
 	}
 	for path, required := range checks {
@@ -81,7 +84,7 @@ func TestDesktopControlSurfacesCanRefreshQuickTunnel(t *testing.T) {
 		content := string(data)
 		for _, want := range required {
 			if !strings.Contains(content, want) {
-				t.Fatalf("%s missing Quick Tunnel refresh behavior %q", path, want)
+				t.Fatalf("%s missing Tailcat control behavior %q", path, want)
 			}
 		}
 	}

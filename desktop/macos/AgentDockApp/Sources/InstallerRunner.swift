@@ -47,6 +47,7 @@ final class InstallerRunner {
     func run(request: InstallRequest) async throws -> InstallResult {
         let serverURL = try request.validatedServerURL()
         let providedTunnelToken = try request.validatedTunnelToken()
+        let tailcat = try request.validatedTailcat()
         try validateBundledRuntime()
         try service.validatePersistentAppLocation()
 
@@ -73,7 +74,8 @@ final class InstallerRunner {
             let prepared = try prepareConfiguration(
                 request: request,
                 serverURL: serverURL,
-                providedTunnelToken: providedTunnelToken
+                providedTunnelToken: providedTunnelToken,
+                tailcat: tailcat
             )
             try await service.runInBackground {
                 try self.writePreparedConfiguration(prepared)
@@ -81,7 +83,7 @@ final class InstallerRunner {
             }
 
             try await service.start()
-            if request.mode != .local && request.mode != .lan {
+            if request.mode == .named {
                 do {
                     try service.setTunnelEnabled(true)
                 } catch {
@@ -93,17 +95,11 @@ final class InstallerRunner {
 
             let publicURL: String
             switch request.mode {
-            case .local:
-                publicURL = ""
-            case .lan:
-                // LAN 模式没有公网地址；局域网设备按本机私网 IP 直连。
+            case .local, .lan, .tailcat:
+                // Tailcat 不发布公网 MCP 地址。连接串留在 tailcat-status.json，由控制面单独展示。
                 publicURL = ""
             case .named:
                 publicURL = serverURL ?? ""
-            case .quick:
-                // Quick Tunnel readiness is asynchronous. Do not hold install completion open for
-                // Cloudflare provisioning; the control panel will expose the URL when it appears.
-                publicURL = currentQuickTunnelURL()
             }
 
             let finalConfiguration = ServiceConfiguration.load(from: paths.environment)
@@ -153,6 +149,7 @@ final class InstallerRunner {
         let environment: Data
         let tunnelEnvironment: Data
         let tunnelToken: String?
+        let tailcatConfig: Data?
         let authToken: String
         let oauthPassword: String
     }
@@ -160,7 +157,8 @@ final class InstallerRunner {
     private func prepareConfiguration(
         request: InstallRequest,
         serverURL: String?,
-        providedTunnelToken: String?
+        providedTunnelToken: String?,
+        tailcat: (port: Int, allow: [String])?
     ) throws -> PreparedConfiguration {
         var values: [String: String] = [:]
         if fileManager.fileExists(atPath: paths.environment.path) {
@@ -191,8 +189,9 @@ final class InstallerRunner {
             values.removeValue(forKey: key)
         }
 
-        var tunnelValues = ["AGENTDOCK_TUNNEL_MODE": request.mode.rawValue]
+        let tunnelValues = ["AGENTDOCK_TUNNEL_MODE": request.mode.rawValue]
         var tunnelToken: String?
+        var tailcatConfig: Data?
         switch request.mode {
         case .local:
             values.removeValue(forKey: "AGENTDOCK_SERVER_URL")
@@ -203,9 +202,12 @@ final class InstallerRunner {
             values["AGENTDOCK_HOST"] = "lan"
             values.removeValue(forKey: "AGENTDOCK_SERVER_URL")
             values["AGENTDOCK_OAUTH_ENABLED"] = "false"
-        case .quick:
-            QuickTunnelBootstrap.prepareInitialCoreEnvironment(&values)
-            tunnelValues["AGENTDOCK_TUNNEL_TARGET"] = "http://127.0.0.1:\(port)"
+        case .tailcat:
+            values.removeValue(forKey: "AGENTDOCK_SERVER_URL")
+            values["AGENTDOCK_OAUTH_ENABLED"] = "false"
+            if let tailcat {
+                tailcatConfig = try TailcatPanel.configData(port: tailcat.port, allow: tailcat.allow)
+            }
         case .named:
             guard let serverURL else {
                 throw ValidationError(L10n.text("Custom domain mode is missing an HTTPS public address."))
@@ -224,6 +226,7 @@ final class InstallerRunner {
             environment: renderEnvironment(values),
             tunnelEnvironment: renderEnvironment(tunnelValues),
             tunnelToken: tunnelToken,
+            tailcatConfig: tailcatConfig,
             authToken: authToken,
             oauthPassword: oauthPassword
         )
@@ -234,6 +237,10 @@ final class InstallerRunner {
         try writePrivateAtomically(prepared.environment, to: paths.environment)
         try writePrivateAtomically(prepared.tunnelEnvironment, to: paths.tunnelEnvironment)
         try? fileManager.removeItem(at: paths.quickTunnelURL)
+        if let config = prepared.tailcatConfig {
+            // 重新应用只更新端口和允许名单，不删除已有密钥，连接串保持不变。
+            try writePrivateAtomically(config, to: paths.tailcatConfig)
+        }
         if let token = prepared.tunnelToken {
             try TunnelTokenStore(paths: paths).persist(token)
         }
@@ -344,17 +351,6 @@ final class InstallerRunner {
             "\(key)=\(ManagedEnvironment.shellQuote(values[key] ?? ""))"
         }.joined(separator: "\n") + "\n"
         return Data(text.utf8)
-    }
-
-    private func currentQuickTunnelURL() -> String {
-        guard let data = try? Data(contentsOf: paths.quickTunnelURL),
-              let value = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let url = URL(string: value),
-              url.scheme == "https",
-              url.host?.hasSuffix(".trycloudflare.com") == true else {
-            return ""
-        }
-        return value
     }
 
     private func validPort(_ value: String?) -> Int? {

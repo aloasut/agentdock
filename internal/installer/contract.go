@@ -266,7 +266,7 @@ func normalizeRequest(request Request) (Request, error) {
 	// LogLevel / TunnelMode 空字符串表示未指定，activate 时保留已有 env。
 	// 不能在这里填 info/none，否则 repair 会把公网模式和日志级别重置掉。
 	switch request.TunnelMode {
-	case "", "none", "quick", "named":
+	case "", "none", "quick", "tailcat", "named":
 	default:
 		return Request{}, fmt.Errorf("不支持的 Tunnel 模式：%s", request.TunnelMode)
 	}

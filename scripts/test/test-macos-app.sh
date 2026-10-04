@@ -38,12 +38,14 @@ swiftc \
   -parse-as-library \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/Localization.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerConfiguration.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/TailcatPanel.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppVersion.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopUpdateResult.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopUpdateServiceState.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopUpdateHandoff.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ManagedEnvironment.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppPaths.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/LANAddresses.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ACPConfiguration.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/TunnelTokenStore.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/PublicEndpointChecker.swift" \
@@ -57,10 +59,12 @@ swiftc \
   -parse-as-library \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/Localization.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerConfiguration.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/TailcatPanel.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppVersion.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopUpdateServiceState.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ManagedEnvironment.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppPaths.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/LANAddresses.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ACPConfiguration.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/TunnelTokenStore.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/LegacyDesktopRuntimeMigration.swift" \

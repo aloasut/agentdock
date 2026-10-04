@@ -163,7 +163,12 @@ public sealed record RuntimeSnapshot(
     bool TunnelTokenStored,
     NexusDeviceStatus Nexus,
     bool NexusConnected,
-    DateTimeOffset CheckedAt);
+    DateTimeOffset CheckedAt,
+    int TailcatPort,
+    string TailcatAllow,
+    string TailcatAddress,
+    string TailcatError,
+    bool TailcatRunning);
 
 public sealed record NexusDeviceStatus(
     bool Paired,

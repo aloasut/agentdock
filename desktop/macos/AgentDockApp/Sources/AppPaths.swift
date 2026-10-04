@@ -20,6 +20,8 @@ struct AppPaths {
     var tunnelEnvironment: URL { appSupport.appendingPathComponent("cloudflared.env") }
     var tunnelTokenStore: URL { appSupport.appendingPathComponent("cloudflare-tunnel-token") }
     var quickTunnelURL: URL { appSupport.appendingPathComponent("quick-tunnel-url.txt") }
+    var tailcatStatus: URL { appSupport.appendingPathComponent("tailcat-status.json") }
+    var tailcatConfig: URL { appSupport.appendingPathComponent("tailcat/config.json") }
     var updateResult: URL { appSupport.appendingPathComponent("update-result.json") }
     var updateServiceState: URL { appSupport.appendingPathComponent("update-services.json") }
     var updateHandoff: URL { appSupport.appendingPathComponent("update-handoff.json") }

@@ -33,7 +33,7 @@ func hydrateExistingRuntime(request Request) (Request, error) {
 	if strings.TrimSpace(request.TunnelMode) == "" {
 		mode := strings.TrimSpace(tunnel["AGENTDOCK_TUNNEL_MODE"])
 		switch mode {
-		case "none", "quick", "named":
+		case "none", "quick", "tailcat", "named":
 			request.TunnelMode = mode
 		case "":
 			// 首次安装没有 Tunnel 状态时保持“未指定”；activate 会按本机模式落盘。
@@ -97,7 +97,8 @@ func writeCoreEnvironment(path string, request Request) error {
 	case "quick":
 		// Quick Tunnel 在拿到临时地址前必须把 Origin 写成空字符串，不能沿用上次 Named 域名。
 		existing["AGENTDOCK_SERVER_URL"] = strings.TrimSpace(request.ServerURL)
-	case "none":
+	case "tailcat", "none":
+		// Tailcat 不发布公网 MCP 地址。连接串只留在运行目录的状态文件里。
 		delete(existing, "AGENTDOCK_SERVER_URL")
 	}
 

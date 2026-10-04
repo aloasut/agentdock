@@ -231,32 +231,24 @@ func activateLinux(ctx context.Context, request Request, staged stagedInstall) (
 				return activatedInstall{}, err
 			}
 		}
+	} else if request.TunnelMode == "tailcat" {
+		// Tailcat 由核心进程自己监听，不安装 cloudflared。连接串不进环境变量。
+		if err := staged.Journal.Snapshot(tunnelEnv); err != nil {
+			return activatedInstall{}, err
+		}
+		if err := writeTunnelEnvironment(tunnelEnv, "tailcat", "", ""); err != nil {
+			return activatedInstall{}, err
+		}
+		if err := removeLinuxTunnelUnit(request, staged, manager, tunnelName); err != nil {
+			return activatedInstall{}, err
+		}
 	} else if request.TunnelMode == "none" {
 		if err := staged.Journal.Snapshot(tunnelEnv); err != nil {
 			return activatedInstall{}, err
 		}
 		_ = os.Remove(tunnelEnv)
-		switch manager {
-		case "systemd":
-			systemdDir := request.SystemdDir
-			if systemdDir == "" {
-				systemdDir = "/etc/systemd/system"
-			}
-			unitPath := filepath.Join(systemdDir, tunnelName+".service")
-			if err := staged.Journal.Snapshot(unitPath); err != nil {
-				return activatedInstall{}, err
-			}
-			_ = os.Remove(unitPath)
-		case "openrc":
-			openRCDir := request.OpenRCDir
-			if openRCDir == "" {
-				openRCDir = "/etc/init.d"
-			}
-			initPath := filepath.Join(openRCDir, tunnelName)
-			if err := staged.Journal.Snapshot(initPath); err != nil {
-				return activatedInstall{}, err
-			}
-			_ = os.Remove(initPath)
+		if err := removeLinuxTunnelUnit(request, staged, manager, tunnelName); err != nil {
+			return activatedInstall{}, err
 		}
 	}
 
@@ -268,6 +260,32 @@ func activateLinux(ctx context.Context, request Request, staged stagedInstall) (
 	}
 
 	return resultFromEnv(envFile, request)
+}
+
+func removeLinuxTunnelUnit(request Request, staged stagedInstall, manager, tunnelName string) error {
+	switch manager {
+	case "systemd":
+		systemdDir := request.SystemdDir
+		if systemdDir == "" {
+			systemdDir = "/etc/systemd/system"
+		}
+		unitPath := filepath.Join(systemdDir, tunnelName+".service")
+		if err := staged.Journal.Snapshot(unitPath); err != nil {
+			return err
+		}
+		_ = os.Remove(unitPath)
+	case "openrc":
+		openRCDir := request.OpenRCDir
+		if openRCDir == "" {
+			openRCDir = "/etc/init.d"
+		}
+		initPath := filepath.Join(openRCDir, tunnelName)
+		if err := staged.Journal.Snapshot(initPath); err != nil {
+			return err
+		}
+		_ = os.Remove(initPath)
+	}
+	return nil
 }
 
 func activateDarwin(ctx context.Context, request Request, staged stagedInstall) (activatedInstall, error) {
@@ -374,6 +392,22 @@ func applyDarwinTunnel(request Request, staged stagedInstall, envFile, agentsDir
 			_ = os.Remove(tunnelPlist)
 		}
 		_ = os.Remove(tunnelEnv)
+		_ = os.Remove(legacyStart)
+		return nil
+	}
+	if request.TunnelMode == "tailcat" {
+		if err := staged.Journal.Snapshot(tunnelEnv); err != nil {
+			return err
+		}
+		if tunnelPlist != "" {
+			if err := staged.Journal.Snapshot(tunnelPlist); err != nil {
+				return err
+			}
+			_ = os.Remove(tunnelPlist)
+		}
+		if err := writeTunnelEnvironment(tunnelEnv, "tailcat", "", ""); err != nil {
+			return err
+		}
 		_ = os.Remove(legacyStart)
 		return nil
 	}
@@ -505,6 +539,16 @@ func activateWindows(ctx context.Context, request Request, staged stagedInstall)
 	}
 	if tunnelMode == "" {
 		tunnelMode = "none"
+	}
+	if tunnelMode == "tailcat" {
+		publicURL = ""
+	}
+	modePath := filepath.Join(request.InstallRoot, "cloudflared-mode.txt")
+	if err := staged.Journal.Snapshot(modePath); err != nil {
+		return activatedInstall{}, err
+	}
+	if err := atomicfile.Write(modePath, []byte(tunnelMode+"\n"), 0o600); err != nil {
+		return activatedInstall{}, err
 	}
 	binDir := layout.BinDir()
 	if request.PayloadDir != "" {

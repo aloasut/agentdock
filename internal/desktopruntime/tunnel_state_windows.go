@@ -93,8 +93,8 @@ func readTunnelMode(path, fallback string) (string, error) {
 	if mode == "" {
 		mode = "none"
 	}
-	if mode != "none" && mode != "quick" && mode != "named" {
-		return "", fmt.Errorf("不支持的 Cloudflare Tunnel 模式：%s", mode)
+	if mode != "none" && mode != "quick" && mode != "named" && mode != "tailcat" {
+		return "", fmt.Errorf("不支持的服务模式：%s", mode)
 	}
 	return mode, nil
 }

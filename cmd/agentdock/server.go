@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/uvwt/agentdock/internal/publicartifacts"
 	"github.com/uvwt/agentdock/internal/selfupdate"
 	"github.com/uvwt/agentdock/internal/startupdiag"
+	"github.com/uvwt/agentdock/internal/tailcatnode"
 )
 
 func runServer(ctx context.Context, args []string, stderr io.Writer) error {
@@ -130,15 +132,29 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 		cancelServices()
 		bridgeWG.Wait()
 	}()
+	var nodeClient *nexusbridge.Client
 	if identityErr == nil {
 		artifactStore := publicartifacts.New(cfg.AgentDockHome, cfg.OAuthServerURL, cfg.Port)
+		nodeClient = nexusbridge.NewClient(identity, server, runtime, artifactStore, nexusStatus)
 		bridgeWG.Add(1)
 		go func() {
 			defer bridgeWG.Done()
-			nexusbridge.NewClient(identity, server, runtime, artifactStore, nexusStatus).Run(serviceCtx)
+			nodeClient.Run(serviceCtx)
 		}()
 	}
 	runtimeRoot := strings.TrimSpace(os.Getenv("AGENTDOCK_RUNTIME_ROOT"))
+	if runtimeRoot != "" {
+		bridgeWG.Add(1)
+		go func() {
+			defer bridgeWG.Done()
+			tailcatnode.Run(serviceCtx, runtimeRoot, func(listenerCtx context.Context, ln net.Listener) error {
+				if nodeClient == nil {
+					return tailcatnode.ServeUnpaired(listenerCtx, ln)
+				}
+				return nodeClient.Serve(listenerCtx, ln)
+			})
+		}()
+	}
 	if runtimeRoot == "" {
 		return httpx.Serve(serviceCtx, server, runtime, cfg)
 	}

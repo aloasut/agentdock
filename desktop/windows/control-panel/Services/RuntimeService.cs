@@ -7,10 +7,31 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Xml.Linq;
 using Microsoft.Win32;
 
 namespace AgentDock.ControlPanel;
+
+internal sealed class TailcatStatusFile
+{
+    [JsonPropertyName("running")]
+    public bool Running { get; set; }
+
+    [JsonPropertyName("port")]
+    public int Port { get; set; }
+
+    [JsonPropertyName("address")]
+    public string Address { get; set; } = "";
+
+    [JsonPropertyName("allow")]
+    public List<string>? Allow { get; set; }
+
+    [JsonPropertyName("error")]
+    public string Error { get; set; } = "";
+}
+
+internal readonly record struct TailcatFiles(int Port, string Allow, string Address, string Error, bool Running);
 
 public sealed class RuntimeService : IDisposable
 {
@@ -143,6 +164,12 @@ public sealed class RuntimeService : IDisposable
         {
             tunnelMode = string.IsNullOrWhiteSpace(manifest.TunnelMode) ? "none" : manifest.TunnelMode;
         }
+        var tailcat = ReadTailcat(RuntimeRoot);
+        if (string.Equals(tunnelMode, "tailcat", StringComparison.OrdinalIgnoreCase))
+        {
+            publicOrigin = "";
+            publicMcpUrl = "";
+        }
 
         return new RuntimeSnapshot(
             manifest,
@@ -162,7 +189,44 @@ public sealed class RuntimeService : IDisposable
             File.Exists(Path.Combine(RuntimeRoot, "cloudflared-token.dpapi")),
             nexus,
             nexusConnected,
-            DateTimeOffset.Now);
+            DateTimeOffset.Now,
+            tailcat.Port,
+            tailcat.Allow,
+            tailcat.Address,
+            tailcat.Error,
+            tailcat.Running);
+    }
+
+    private static TailcatFiles ReadTailcat(string runtimeRoot)
+    {
+        var status = ReadTailcatJson(Path.Combine(runtimeRoot, "tailcat-status.json"));
+        var config = ReadTailcatJson(Path.Combine(runtimeRoot, "tailcat", "config.json"));
+        var port = status.Port > 0 ? status.Port : config.Port;
+        if (port <= 0)
+        {
+            port = 80;
+        }
+        var allow = !string.IsNullOrWhiteSpace(status.Allow) ? status.Allow : config.Allow;
+        return new TailcatFiles(port, allow ?? "", status.Address ?? "", status.Error ?? "", status.Running);
+    }
+
+    private static TailcatFiles ReadTailcatJson(string path)
+    {
+        try
+        {
+            var json = File.ReadAllText(path);
+            var parsed = JsonSerializer.Deserialize<TailcatStatusFile>(json);
+            if (parsed == null)
+            {
+                return new TailcatFiles(0, "", "", "", false);
+            }
+            var allow = parsed.Allow == null ? "" : string.Join(Environment.NewLine, parsed.Allow);
+            return new TailcatFiles(parsed.Port, allow, parsed.Address ?? "", parsed.Error ?? "", parsed.Running);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return new TailcatFiles(0, "", "", "", false);
+        }
     }
 
     public string ReadBearerToken() => ReadProtectedText(Path.Combine(RuntimeRoot, "auth-token.dpapi"), AuthEntropy);
@@ -195,6 +259,10 @@ public sealed class RuntimeService : IDisposable
                         "tunnel",
                         "regenerate",
                         () => RunTunnelActionAsync("regenerate", cancellationToken));
+                }
+                else if (mode == "tailcat")
+                {
+                    await RunRuntimeStageAsync("core", "restart", () => RunCoreActionAsync("restart", cancellationToken));
                 }
                 else
                 {
@@ -386,6 +454,9 @@ public sealed class RuntimeService : IDisposable
         string mode,
         string serverUrl,
         string tunnelToken,
+        int tailcatPort = 0,
+        string? tailcatAllow = null,
+        bool tailcatAllowSet = false,
         CancellationToken cancellationToken = default)
     {
         var arguments = new List<string>
@@ -394,6 +465,20 @@ public sealed class RuntimeService : IDisposable
             "--mode", mode,
             "--server-url", serverUrl ?? ""
         };
+        if (string.Equals(mode, "tailcat", StringComparison.OrdinalIgnoreCase))
+        {
+            if (tailcatPort > 0)
+            {
+                arguments.Add("--tailcat-port");
+                arguments.Add(tailcatPort.ToString());
+            }
+            if (tailcatAllowSet)
+            {
+                arguments.Add("--tailcat-allow");
+                arguments.Add(tailcatAllow ?? "");
+                arguments.Add("--tailcat-allow-set");
+            }
+        }
         string? secretFile = null;
         try
         {
@@ -411,8 +496,11 @@ public sealed class RuntimeService : IDisposable
         }
     }
 
-    public Task RegenerateQuickTunnelAsync(CancellationToken cancellationToken = default) =>
+    public Task ResetTailcatConnectionAsync(CancellationToken cancellationToken = default) =>
         RunTunnelActionAsync("regenerate", cancellationToken);
+
+    public Task RegenerateQuickTunnelAsync(CancellationToken cancellationToken = default) =>
+        ResetTailcatConnectionAsync(cancellationToken);
 
     public async Task SaveSettingsAsync(
         ControlPanelSettings settings,

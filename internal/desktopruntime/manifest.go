@@ -254,8 +254,11 @@ func (manifest Manifest) Validate() error {
 	if err := validateHTTPURL(manifest.LocalMCPURL, false); err != nil {
 		return fmt.Errorf("invalid local_mcp_url: %w", err)
 	}
-	if manifest.TunnelMode != "none" && manifest.TunnelMode != "quick" && manifest.TunnelMode != "named" {
+	if manifest.TunnelMode != "none" && manifest.TunnelMode != "quick" && manifest.TunnelMode != "named" && manifest.TunnelMode != "tailcat" {
 		return fmt.Errorf("unsupported Windows tunnel mode: %s", manifest.TunnelMode)
+	}
+	if manifest.TunnelMode == "tailcat" && strings.TrimSpace(manifest.PublicURL) != "" {
+		return errors.New("public_url must be empty when tunnel_mode is tailcat")
 	}
 	if manifest.TunnelMode == "none" && strings.TrimSpace(manifest.PublicURL) != "" {
 		return errors.New("public_url must be empty when tunnel_mode is none")

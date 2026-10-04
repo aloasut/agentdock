@@ -1,12 +1,6 @@
 import AppKit
 import Foundation
 
-private enum QuickTunnelRefreshState {
-    case idle
-    case refreshing
-    case failed
-}
-
 @MainActor
 final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private lazy var installer = InstallerRunner(service: service)
@@ -40,7 +34,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let updateButton = NSButton(title: L10n.text("Check for updates"), target: nil, action: nil)
 
     private let publicMode = NSSegmentedControl(
-        labels: [L10n.text("Local only"), L10n.text("LAN"), L10n.text("Temporary address"), L10n.text("Custom domain")],
+        labels: [L10n.text("Local only"), L10n.text("LAN"), L10n.text("Tailcat"), L10n.text("Custom domain")],
         trackingMode: .selectOne,
         target: nil,
         action: nil
@@ -49,6 +43,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let namedFields = NSStackView()
     private let serverURLField = NSTextField(string: "")
     private let tunnelTokenField = NSSecureTextField(string: "")
+    private let tailcatFields = NSStackView()
+    private let tailcatPortField = NSTextField(string: "80")
+    private let tailcatAllowField = NSTextField(string: "")
+    private let tailcatResetButton = NSButton(title: L10n.text("Reset connection string"), target: nil, action: nil)
+    private let publicAddressTitle = NSTextField(labelWithString: L10n.text("Public MCP"))
+    private let tailcatReveal = NSButton(title: L10n.text("Show"), target: nil, action: nil)
 
     private let progress = NSProgressIndicator()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
@@ -66,7 +66,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var oauthVisible = false
     private var isBusy = false
     private var isUpdateInProgress = false
-    private var quickTunnelRefreshState: QuickTunnelRefreshState = .idle
+    private var persistedTunnelRaw = ""
+    private var tailcatAddressValue = ""
+    private var tailcatAddressVisible = false
+    private var initialTailcatPort = "80"
+    private var initialTailcatAllow = ""
 
     private var migrationRequired: Bool {
         currentStatus.migrationRequired
@@ -128,7 +132,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         authVisible = false
         oauthVisible = false
         statusLabel.isHidden = true
-        quickTunnelRefreshState = .idle
         cancelPublicCheck(clearLastResult: true)
         setBusy(false)
 
@@ -141,6 +144,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             serviceSection.isHidden = false
             updateServiceSection(status)
             selectCurrentMode(configuration: status.configuration)
+            renderConnectionAddress(status.configuration?.publicMCPURL, automaticallyCheck: true)
         } else {
             titleLabel.stringValue = L10n.text("Set up AgentDock")
             subtitleLabel.stringValue = L10n.text("Configure the local service and allow AgentDock to run in the background")
@@ -276,7 +280,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         serviceSection.spacing = 8
         serviceSection.addArrangedSubview(sectionTitle(L10n.text("Connection information")))
         addFullWidth(valueRow(title: L10n.text("Local MCP"), field: localAddress, actions: [copyButton(#selector(copyLocalAddress))]), to: serviceSection)
-        addFullWidth(valueRow(title: L10n.text("Public MCP"), field: publicAddress, actions: [publicTestButton, publicCopyButton]), to: serviceSection)
+        publicAddressTitle.textColor = .secondaryLabelColor
+        publicAddressTitle.widthAnchor.constraint(equalToConstant: 94).isActive = true
+        tailcatReveal.bezelStyle = .inline
+        tailcatReveal.target = self
+        tailcatReveal.action = #selector(toggleTailcatAddress)
+        tailcatReveal.isHidden = true
+        addFullWidth(labeledValueRow(label: publicAddressTitle, field: publicAddress, actions: [tailcatReveal, publicTestButton, publicCopyButton]), to: serviceSection)
         addFullWidth(valueDetailRow(publicCheckStatus), to: serviceSection)
         addFullWidth(valueRow(title: "Nexus", field: nexusStateLabel, actions: []), to: serviceSection)
         addFullWidth(valueRow(title: "Bearer Token", field: authToken, actions: [authReveal, copyButton(#selector(copyAuthToken)), copyMCPButton]), to: serviceSection)
@@ -316,6 +326,28 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         namedFields.spacing = 7
         addFullWidth(formRow(title: L10n.text("Public address"), control: serverURLField), to: namedFields)
         addFullWidth(formRow(title: "Tunnel Token", control: tunnelTokenField), to: namedFields)
+
+        tailcatPortField.placeholderString = "80"
+        tailcatAllowField.placeholderString = L10n.text("Leave blank to allow any client that has the connection string")
+        for field in [tailcatPortField, tailcatAllowField] {
+            field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            field.target = self
+            field.action = #selector(configurationEdited)
+        }
+        tailcatResetButton.bezelStyle = .inline
+        tailcatResetButton.target = self
+        tailcatResetButton.action = #selector(resetTailcatPressed)
+        tailcatFields.orientation = .vertical
+        tailcatFields.alignment = .leading
+        tailcatFields.spacing = 7
+        addFullWidth(formRow(title: L10n.text("TCP port"), control: tailcatPortField), to: tailcatFields)
+        addFullWidth(formRow(title: L10n.text("Allowed clients"), control: tailcatAllowField), to: tailcatFields)
+        let tailcatHint = NSTextField(wrappingLabelWithString: L10n.text("Enter nodekey: followed by 64 hexadecimal digits, separated by commas or spaces. Leave blank to allow any client that has the connection string."))
+        tailcatHint.textColor = .secondaryLabelColor
+        tailcatHint.font = .systemFont(ofSize: 12)
+        addFullWidth(tailcatHint, to: tailcatFields)
+        addFullWidth(tailcatResetButton, to: tailcatFields)
 
         progress.style = .spinning
         progress.controlSize = .small
@@ -357,6 +389,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         contentStack.addArrangedSubview(publicMode)
         addFullWidth(modeDescription, to: contentStack)
         addFullWidth(namedFields, to: contentStack)
+        addFullWidth(tailcatFields, to: contentStack)
+        tailcatFields.isHidden = true
         addFullWidth(separator(), to: contentStack)
         addFullWidth(footerSpacer, to: contentStack)
         addFullWidth(footer, to: contentStack)
@@ -403,7 +437,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         let configuration = status.configuration
         localAddress.stringValue = displayAddress(configuration)
-        renderPublicAddress(configuration?.publicMCPURL, automaticallyCheck: true)
         authTokenValue = configuration?.authToken ?? ""
         oauthPasswordValue = configuration?.oauthPassword ?? ""
         startStopButton.title = migrationRequired
@@ -429,27 +462,33 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func renderPublicAddress(_ publicMCPURL: URL?, automaticallyCheck: Bool) {
-        switch quickTunnelRefreshState {
-        case .refreshing:
-            cancelPublicCheck(clearLastResult: true)
-            displayedPublicMCPURL = nil
-            publicAddress.stringValue = L10n.text("Generating a new address…")
-            publicCheckStatus.stringValue = L10n.text("The old address is hidden; waiting for a new temporary public address")
-            publicCheckStatus.textColor = .secondaryLabelColor
-            publicCheckStatus.isHidden = false
-            refreshPublicActions()
-        case .failed:
-            cancelPublicCheck(clearLastResult: true)
-            displayedPublicMCPURL = nil
-            publicAddress.stringValue = L10n.text("No new address generated")
-            publicCheckStatus.stringValue = L10n.text("Refresh failed; the old address is not shown as the new address")
-            publicCheckStatus.textColor = .systemRed
-            publicCheckStatus.isHidden = false
-            refreshPublicActions()
-        case .idle:
+    private func renderConnectionAddress(_ publicMCPURL: URL?, automaticallyCheck: Bool) {
+        guard persistedTunnelRaw == "tailcat" else {
+            publicAddressTitle.stringValue = L10n.text("Public MCP")
+            tailcatReveal.isHidden = true
             setDisplayedPublicMCPURL(publicMCPURL, automaticallyCheck: automaticallyCheck)
+            return
         }
+        cancelPublicCheck(clearLastResult: true)
+        displayedPublicMCPURL = nil
+        publicAddressTitle.stringValue = L10n.text("Tailcat")
+        tailcatReveal.isHidden = false
+        tailcatReveal.title = tailcatAddressVisible ? L10n.text("Hide") : L10n.text("Show")
+        publicAddress.stringValue = displayedSecret(
+            tailcatAddressValue,
+            visible: tailcatAddressVisible,
+            empty: L10n.text("Waiting for the Tailcat connection string…")
+        )
+        let panel = TailcatPanel.load(paths: service.paths)
+        if !panel.error.isEmpty {
+            publicCheckStatus.stringValue = panel.error
+            publicCheckStatus.textColor = .systemRed
+        } else {
+            publicCheckStatus.stringValue = L10n.text("Copy this connection string and the TCP port into the NexusDock node. Treat the string as a password.")
+            publicCheckStatus.textColor = .secondaryLabelColor
+        }
+        publicCheckStatus.isHidden = false
+        refreshPublicActions()
     }
 
     private func setDisplayedPublicMCPURL(_ publicMCPURL: URL?, automaticallyCheck: Bool) {
@@ -475,18 +514,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func beginQuickTunnelRefresh() {
-        quickTunnelRefreshState = .refreshing
-        renderPublicAddress(nil, automaticallyCheck: false)
-    }
-
-    private func markQuickTunnelRefreshFailed() {
-        quickTunnelRefreshState = .failed
-        renderPublicAddress(nil, automaticallyCheck: false)
-    }
-
     private func beginPublicCheck(_ publicMCPURL: URL, automatic: Bool) {
-        guard quickTunnelRefreshState == .idle else { return }
+        guard persistedTunnelRaw != "tailcat" else { return }
         if automatic, lastCheckedPublicMCPURL == publicMCPURL { return }
 
         cancelPublicCheck(clearLastResult: !automatic)
@@ -522,7 +551,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func finishPublicCheck(_ result: PublicEndpointCheckResult, for publicMCPURL: URL) {
-        guard quickTunnelRefreshState == .idle,
+        guard persistedTunnelRaw != "tailcat",
               activePublicCheckURL == publicMCPURL,
               displayedPublicMCPURL == publicMCPURL else {
             return
@@ -548,14 +577,44 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func refreshPublicActions() {
-        let hasAddress = quickTunnelRefreshState == .idle && displayedPublicMCPURL != nil
+        if persistedTunnelRaw == "tailcat" {
+            publicCopyButton.isEnabled = !tailcatAddressValue.isEmpty
+            publicTestButton.isEnabled = false
+            publicTestButton.title = L10n.text("Test")
+            return
+        }
+        let hasAddress = displayedPublicMCPURL != nil
         publicCopyButton.isEnabled = hasAddress
         publicTestButton.title = activePublicCheckURL == nil ? L10n.text("Test") : L10n.text("Checking")
         publicTestButton.isEnabled = hasAddress && activePublicCheckURL == nil && !controlsLocked
     }
 
     private func selectCurrentMode(configuration: ServiceConfiguration?) {
-        // LAN 模式没有公网地址，必须先按 host=lan 识别，否则会落进下面的"仅本机"分支。
+        persistedTunnelRaw = (try? service.configuredTunnelModeRaw()) ?? ""
+        let panel = TailcatPanel.load(paths: service.paths)
+        initialTailcatPort = String(panel.port)
+        initialTailcatAllow = panel.allowText
+        tailcatPortField.stringValue = initialTailcatPort
+        tailcatAllowField.stringValue = initialTailcatAllow
+        tailcatAddressValue = persistedTunnelRaw == "tailcat" ? panel.address : ""
+        tailcatAddressVisible = false
+        tunnelTokenField.stringValue = ""
+
+        // 已保存的 Tailcat，以及仍写着 quick 的旧临时地址，都先显示 Tailcat。
+        // quick 不会在这里改文件；下一次应用才会写成 tailcat 并停掉 cloudflared。
+        if persistedTunnelRaw == "tailcat" || persistedTunnelRaw == "quick" {
+            initialMode = .tailcat
+            initialServerURL = ""
+            select(mode: .tailcat)
+            return
+        }
+        if persistedTunnelRaw == "named" {
+            initialMode = .named
+            initialServerURL = configuration?.publicURL ?? ""
+            serverURLField.stringValue = initialServerURL
+            select(mode: .named)
+            return
+        }
         if configuration?.isLANListen == true {
             initialMode = .lan
             initialServerURL = ""
@@ -569,22 +628,23 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         if publicURL.contains(".trycloudflare.com") {
-            initialMode = .quick
+            initialMode = .tailcat
             initialServerURL = ""
-            select(mode: .quick)
+            select(mode: .tailcat)
         } else {
             initialMode = .named
             initialServerURL = publicURL
             serverURLField.stringValue = publicURL
             select(mode: .named)
         }
-        tunnelTokenField.stringValue = ""
     }
 
     private func select(mode: TunnelMode) {
         publicMode.selectedSegment = segment(for: mode)
         modeDescription.stringValue = mode.detail
         namedFields.isHidden = mode != .named
+        tailcatFields.isHidden = mode != .tailcat
+        tailcatResetButton.isEnabled = currentStatus.installed && persistedTunnelRaw == "tailcat" && !controlsLocked
         if mode == .named, currentStatus.installed, initialMode == .named {
             tunnelTokenField.placeholderString = L10n.text("Leave blank to keep the existing Tunnel Token")
         } else {
@@ -597,7 +657,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         switch mode {
         case .local: return 0
         case .lan: return 1
-        case .quick: return 2
+        case .tailcat: return 2
         case .named: return 3
         }
     }
@@ -621,7 +681,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var selectedMode: TunnelMode {
         switch publicMode.selectedSegment {
         case 1: return .lan
-        case 2: return .quick
+        case 2: return .tailcat
         case 3: return .named
         default: return .local
         }
@@ -639,26 +699,21 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         let request = InstallRequest(
             mode: selectedMode,
             serverURL: serverURLField.stringValue,
-            tunnelToken: tunnelTokenField.stringValue
+            tunnelToken: tunnelTokenField.stringValue,
+            tailcatPort: tailcatPortField.stringValue,
+            tailcatAllow: tailcatAllowField.stringValue
         )
         do {
             _ = try request.validatedServerURL()
             _ = try request.validatedTunnelToken()
+            _ = try request.validatedTailcat()
         } catch {
             showStatus(error.localizedDescription, isError: true)
             return
         }
 
-        let refreshingQuickTunnel = currentStatus.installed && initialMode == .quick && selectedMode == .quick
-        if refreshingQuickTunnel {
-            // 生成过程中立即隐藏旧地址，避免用户把旧地址误认为本次生成结果。
-            beginQuickTunnelRefresh()
-        }
         setBusy(true)
-        showStatus(
-            refreshingQuickTunnel ? L10n.text("Generating a new temporary public address…") : L10n.text("Validating and applying AgentDock configuration…"),
-            isError: false
-        )
+        showStatus(L10n.text("Validating and applying AgentDock configuration…"), isError: false)
         Task {
             do {
                 let result = try await installer.run(request: request)
@@ -674,27 +729,29 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 authTokenValue = result.authToken
                 oauthPasswordValue = result.oauthPassword
                 localAddress.stringValue = displayAddress(ServiceConfiguration.load(from: service.paths.environment))
-                quickTunnelRefreshState = .idle
-                setDisplayedPublicMCPURL(resultPublicMCPURL, automaticallyCheck: true)
+                persistedTunnelRaw = result.tunnelMode
+                if persistedTunnelRaw == "tailcat" {
+                    tailcatAddressValue = TailcatPanel.load(paths: service.paths).address
+                }
+                renderConnectionAddress(resultPublicMCPURL, automaticallyCheck: true)
                 tunnelTokenField.stringValue = ""
                 authVisible = false
                 oauthVisible = false
                 refreshCredentialFields()
                 showStatus(
-                    refreshingQuickTunnel
-                        ? L10n.text("A new temporary public address was generated; checking public access automatically.")
+                    selectedMode == .tailcat
+                        ? L10n.text("Tailcat is configured. Copy the connection string and TCP port into the NexusDock node.")
                         : L10n.format("AgentDock %@ is configured and running normally.", result.version),
                     isError: false
                 )
                 setBusy(false)
                 initialMode = selectedMode
+                initialTailcatPort = tailcatPortField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                initialTailcatAllow = tailcatAllowField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 initialServerURL = selectedMode == .named ? (try? request.validatedServerURL()) ?? "" : ""
                 refreshChangeState()
                 onChanged()
             } catch {
-                if refreshingQuickTunnel {
-                    markQuickTunnelRefreshFailed()
-                }
                 setBusy(false)
                 showStatus(error.localizedDescription, isError: true)
             }
@@ -770,7 +827,39 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func copyLocalAddress(_ sender: NSButton) { copy(localAddress.stringValue, button: sender) }
     @objc private func copyPublicAddress(_ sender: NSButton) {
+        if persistedTunnelRaw == "tailcat" {
+            copy(tailcatAddressValue, button: sender)
+            return
+        }
         copy(displayedPublicMCPURL?.absoluteString ?? "", button: sender)
+    }
+
+    @objc private func toggleTailcatAddress() {
+        tailcatAddressVisible.toggle()
+        renderConnectionAddress(nil, automaticallyCheck: false)
+    }
+
+    @objc private func resetTailcatPressed() {
+        guard persistedTunnelRaw == "tailcat", !controlsLocked else { return }
+        tailcatAddressValue = ""
+        tailcatAddressVisible = false
+        renderConnectionAddress(nil, automaticallyCheck: false)
+        setBusy(true)
+        showStatus(L10n.text("Resetting the Tailcat connection string…"), isError: false)
+        Task {
+            do {
+                try await service.regenerateTailcat()
+                persistedTunnelRaw = (try? service.configuredTunnelModeRaw()) ?? persistedTunnelRaw
+                tailcatAddressValue = TailcatPanel.load(paths: service.paths).address
+                renderConnectionAddress(nil, automaticallyCheck: false)
+                setBusy(false)
+                showStatus(L10n.text("The Tailcat connection string was reset. Copy the new string after the service is running."), isError: false)
+                onChanged()
+            } catch {
+                setBusy(false)
+                showStatus(error.localizedDescription, isError: true)
+            }
+        }
     }
     @objc private func copyAuthToken(_ sender: NSButton) { copy(authTokenValue, button: sender) }
 
@@ -843,13 +932,18 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        let refreshingQuickTunnel = initialMode == .quick && selectedMode == .quick
-        applyButton.title = refreshingQuickTunnel ? L10n.text("Regenerate temporary address") : L10n.text("Apply changes")
+        applyButton.title = L10n.text("Apply changes")
 
         let serverChanged = selectedMode == .named
             && serverURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 != initialServerURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let changed = refreshingQuickTunnel
+        let tailcatPort = tailcatPortField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tailcatAllow = tailcatAllowField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tailcatChanged = selectedMode == .tailcat
+            && (tailcatPort != initialTailcatPort || tailcatAllow != initialTailcatAllow)
+        let tailcatNeedsWrite = selectedMode == .tailcat && persistedTunnelRaw != "tailcat"
+        let changed = tailcatNeedsWrite
+            || tailcatChanged
             || selectedMode != initialMode
             || serverChanged
             || !tunnelTokenField.stringValue.isEmpty
@@ -859,7 +953,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private func setBusy(_ busy: Bool) {
         isBusy = busy
         let locked = controlsLocked
-        for control in [publicMode, serverURLField, tunnelTokenField, startStopButton, restartButton, updateButton, advancedButton] {
+        for control in [publicMode, serverURLField, tunnelTokenField, tailcatPortField, tailcatAllowField, tailcatResetButton, startStopButton, restartButton, updateButton, advancedButton] {
             control.isEnabled = !locked && (control !== advancedButton || currentStatus.installed)
         }
         if !locked && migrationRequired {
@@ -886,8 +980,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func updateWindowHeight() {
-        let installedHeight: CGFloat = selectedMode == .named ? 620 : 580
-        let installHeight: CGFloat = selectedMode == .named ? 455 : 360
+        let installedHeight: CGFloat = selectedMode == .tailcat ? 720 : (selectedMode == .named ? 620 : 580)
+        let installHeight: CGFloat = selectedMode == .tailcat ? 520 : (selectedMode == .named ? 455 : 360)
         let desiredHeight = currentStatus.installed ? installedHeight : installHeight
         guard let window else { return }
 
@@ -937,6 +1031,14 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 0
+        return row
+    }
+
+    private func labeledValueRow(label: NSTextField, field: NSTextField, actions: [NSButton]) -> NSView {
+        let row = NSStackView(views: [label, field] + actions)
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
         return row
     }
 

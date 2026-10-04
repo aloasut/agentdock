@@ -72,6 +72,8 @@ const (
 	menuOpenDocs        = 1008
 	menuExit            = 1009
 	menuRefreshQuickURL = 1010
+	menuCopyTailcat     = 1011
+	menuResetTailcat    = 1012
 )
 
 var (
@@ -415,6 +417,10 @@ func (app *trayApp) showMenu() {
 			labels.RefreshQuickURL,
 		)
 	}
+	if state.Manifest.TunnelMode == "tailcat" {
+		appendMenu(menu, menuFlags(state.Manifest.AgentDockBinary != ""), menuCopyTailcat, labels.CopyTailcat)
+		appendMenu(menu, menuFlags(state.Manifest.AgentDockBinary != ""), menuResetTailcat, labels.ResetTailcat)
+	}
 	appendMenu(menu, mfSeparator, 0, "")
 	appendMenu(menu, menuFlags(!state.Healthy && state.Manifest.AgentDockBinary != ""), menuStart, labels.StartAgentDock)
 	appendMenu(menu, menuFlags(state.Manifest.AgentDockBinary != ""), menuRestart, labels.RestartAgentDock)
@@ -468,6 +474,23 @@ func (app *trayApp) handleMenu(command uint16) {
 			return
 		}
 		app.notify("AgentDock", labels.RefreshQuickStarted, false)
+	case menuCopyTailcat:
+		address, err := tailcatAddress(state.Manifest)
+		if err != nil {
+			app.notify("AgentDock", fmt.Sprintf(labels.CopyTailcatFailed, err), true)
+			return
+		}
+		if err := setClipboardText(address); err != nil {
+			app.notify("AgentDock", fmt.Sprintf(labels.CopyTailcatFailed, err), true)
+			return
+		}
+		app.notify("AgentDock", labels.CopyTailcatSucceeded, false)
+	case menuResetTailcat:
+		if err := resetTailcat(state.Manifest); err != nil {
+			app.notify("AgentDock", fmt.Sprintf(labels.ResetTailcatFailed, err), true)
+			return
+		}
+		app.notify("AgentDock", labels.ResetTailcatStarted, false)
 	case menuStart:
 		if err := startAgentDock(state.Manifest); err != nil {
 			app.notify("AgentDock", fmt.Sprintf(labels.StartFailed, err), true)
@@ -642,6 +665,34 @@ func regenerateQuickTunnel(manifest desktopruntime.Manifest) error {
 		return errors.New(currentTrayText().QuickTunnelNotActive)
 	}
 	return runNativeAgentDock(manifest, "tunnel", "regenerate")
+}
+
+func resetTailcat(manifest desktopruntime.Manifest) error {
+	if manifest.TunnelMode != "tailcat" {
+		return errors.New(currentTrayText().TailcatNotActive)
+	}
+	return runNativeAgentDock(manifest, "tunnel", "regenerate")
+}
+
+func tailcatAddress(manifest desktopruntime.Manifest) (string, error) {
+	root, err := runtimeRootForManifest(manifest)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(filepath.Join(root, "tailcat-status.json"))
+	if err != nil {
+		return "", err
+	}
+	var status struct {
+		Address string `json:"address"`
+	}
+	if err := json.Unmarshal(data, &status); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(status.Address) == "" {
+		return "", errors.New(currentTrayText().TailcatAddressMissing)
+	}
+	return status.Address, nil
 }
 
 func startAgentDock(manifest desktopruntime.Manifest) error {

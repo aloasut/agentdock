@@ -9,7 +9,7 @@ param(
     [switch] $ConfigurePublicAccess,
     [int] $Port = 8765,
     [string] $AuthToken = '',
-    [ValidateSet('auto', 'none', 'quick', 'named')]
+    [ValidateSet('auto', 'none', 'quick', 'tailcat', 'named')]
     [string] $TunnelMode = 'auto',
     [string] $ServerUrl = '',
     [string] $TunnelToken = '',
@@ -272,8 +272,8 @@ function Resolve-TunnelMode {
     $environmentMode = [Environment]::GetEnvironmentVariable('AGENTDOCK_TUNNEL_MODE')
     if (-not [string]::IsNullOrWhiteSpace($environmentMode)) {
         $environmentMode = $environmentMode.Trim().ToLowerInvariant()
-        if (@('none', 'quick', 'named') -notcontains $environmentMode) {
-            throw "AGENTDOCK_TUNNEL_MODE must be none, quick, or named: $environmentMode"
+        if (@('none', 'quick', 'tailcat', 'named') -notcontains $environmentMode) {
+            throw "AGENTDOCK_TUNNEL_MODE must be none, quick, tailcat, or named: $environmentMode"
         }
         return $environmentMode
     }
@@ -281,8 +281,8 @@ function Resolve-TunnelMode {
     $storedMode = Read-TextFile -Path $ModePath
     if (-not [string]::IsNullOrWhiteSpace($storedMode)) {
         $storedMode = $storedMode.ToLowerInvariant()
-        if (@('quick', 'named') -contains $storedMode) {
-            Write-Host "Reusing public access mode: $storedMode"
+        if (@('quick', 'tailcat', 'named') -contains $storedMode) {
+            Write-Host "Reusing service mode: $storedMode"
             return $storedMode
         }
     }
@@ -292,14 +292,14 @@ function Resolve-TunnelMode {
     }
 
     Write-Host ''
-    Write-Host 'Choose public access:'
+    Write-Host 'Choose how AgentDock is reached:'
     Write-Host '- Have a Cloudflare domain: use a fixed address for long-running clients and OAuth.'
-    Write-Host '- No domain: create a temporary address for a quick trial. It changes after cloudflared restarts.'
+    Write-Host '- No domain: run Tailcat. Copy the connection string and TCP port into NexusDock. This does not publish a public MCP address.'
     $answer = Read-Host 'Do you have a domain already connected to Cloudflare? [y/N]'
     if ($answer -match '^(?i:y|yes)$') {
         return 'named'
     }
-    return 'quick'
+    return 'tailcat'
 }
 
 function Read-SecretFile {
@@ -1277,6 +1277,7 @@ try {
         -ModePath $tunnelModePath `
         -StartupRequested ([bool] $RegisterStartup) `
         -PublicAccessRequested ([bool] $ConfigurePublicAccess)
+    $cloudflaredTunnel = @('quick', 'named') -contains $resolvedTunnelMode
     if ($resolvedTunnelMode -ne 'none' -or (Test-Path -LiteralPath $tunnelModePath -PathType Leaf)) {
         $RegisterStartup = $true
     }
@@ -1729,7 +1730,7 @@ try {
             if ($resolvedTunnelMode -eq 'named' -and [string]::IsNullOrWhiteSpace($ServerUrl)) {
                 $ServerUrl = Read-TextFile -Path $namedServerUrlPath
             }
-            if ($resolvedTunnelMode -eq 'quick') {
+            if ($resolvedTunnelMode -eq 'quick' -or $resolvedTunnelMode -eq 'tailcat') {
                 $ServerUrl = ''
             }
             if ($resolvedTunnelMode -eq 'named') {
@@ -1796,7 +1797,7 @@ exit `$LASTEXITCODE
         Set-RunValue -RegistryPath $runKey -Name $trayRunValueName -Value $trayStartupCommand
         $trayStartupRegistrationChanged = $true
 
-        if ($resolvedTunnelMode -ne 'none') {
+        if ($cloudflaredTunnel) {
             # Compatibility launcher delegates to the native Tunnel supervisor.
             # Normal startup still uses the WinExe tray proxy.
             $cloudflaredLauncher = @"
@@ -1814,9 +1815,11 @@ exit `$LASTEXITCODE
         } else {
             Remove-ItemProperty -LiteralPath $runKey -Name $cloudflaredRunValueName -ErrorAction SilentlyContinue
             $tunnelStartupRegistrationChanged = $true
-            Write-TextFile -Path $tunnelModePath -Value 'none'
-            Write-TextFile -Path $serverUrlPath -Value ''
-            Remove-Item -LiteralPath $quickTunnelUrlPath -Force -ErrorAction SilentlyContinue
+            if ($resolvedTunnelMode -eq 'none') {
+                Write-TextFile -Path $tunnelModePath -Value 'none'
+                Write-TextFile -Path $serverUrlPath -Value ''
+                Remove-Item -LiteralPath $quickTunnelUrlPath -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 
@@ -2003,7 +2006,7 @@ exit `$LASTEXITCODE
     # Core is authoritative for install/update success. Start Tunnel only after commit and do it
     # asynchronously through the existing WinExe startup proxy so Cloudflare/network readiness
     # cannot hold the transaction or its success UI open.
-    if ($RegisterStartup -and $resolvedTunnelMode -ne 'none') {
+    if ($RegisterStartup -and $cloudflaredTunnel) {
         try {
             $tunnelStartupArguments = "--start-tunnel --runtime-root `"$runtimeDir`""
             if ($InstallChannel -eq 'setup') {
@@ -2064,7 +2067,12 @@ exit `$LASTEXITCODE
     if ($RegisterStartup) {
         Write-Host "Bearer Token: $AuthToken"
     }
-    if ($resolvedTunnelMode -ne 'none') {
+    if ($resolvedTunnelMode -eq 'tailcat') {
+        Write-Host ''
+        Write-Host 'Tailcat mode configured.'
+        Write-Host 'Open the control panel and copy the connection string and TCP port into the NexusDock node.'
+        Write-Host 'This mode does not publish a public MCP address.'
+    } elseif ($resolvedTunnelMode -ne 'none') {
         Write-Host ''
         Write-Host 'AgentDock public access configured'
         Write-Host "Public mode: $resolvedTunnelMode"

@@ -132,6 +132,45 @@
   <data name="RegenerateTemporaryAddress" xml:space="preserve">
     <value>Regenerate temporary address</value>
   </data>
+  <data name="Tailcat" xml:space="preserve">
+    <value>Tailcat</value>
+  </data>
+  <data name="TailcatDescription" xml:space="preserve">
+    <value>Run a Tailcat server on this computer. Copy the connection string and TCP port into the NexusDock node. NexusDock dials in. This does not publish a public MCP address.</value>
+  </data>
+  <data name="TailcatConfiguration" xml:space="preserve">
+    <value>Tailcat</value>
+  </data>
+  <data name="TailcatPort" xml:space="preserve">
+    <value>TCP port</value>
+  </data>
+  <data name="TailcatAllow" xml:space="preserve">
+    <value>Allowed clients</value>
+  </data>
+  <data name="TailcatAllowHelp" xml:space="preserve">
+    <value>nodekey: plus 64 hexadecimal digits. Leave blank to allow any client that has the connection string.</value>
+  </data>
+  <data name="TailcatConnectionString" xml:space="preserve">
+    <value>Connection string</value>
+  </data>
+  <data name="ResetTailcatConnection" xml:space="preserve">
+    <value>Reset connection string</value>
+  </data>
+  <data name="TailcatNoPublicMCP" xml:space="preserve">
+    <value>Tailcat does not publish a public MCP address. Copy the connection string and TCP port into the NexusDock node.</value>
+  </data>
+  <data name="TailcatPortInvalid" xml:space="preserve">
+    <value>The Tailcat port must be between 1 and 65535.</value>
+  </data>
+  <data name="WaitingForTailcat" xml:space="preserve">
+    <value>Waiting for the Tailcat connection string…</value>
+  </data>
+  <data name="ConnectionStringCopied" xml:space="preserve">
+    <value>Connection string copied.</value>
+  </data>
+  <data name="Copy" xml:space="preserve">
+    <value>Copy</value>
+  </data>
   <data name="AdvancedSettings" xml:space="preserve">
     <value>Advanced settings</value>
   </data>

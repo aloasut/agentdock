@@ -1,12 +1,15 @@
 package nexusbridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -22,12 +25,26 @@ import (
 	"github.com/uvwt/agentdock/internal/observability"
 	"github.com/uvwt/agentdock/internal/publicartifacts"
 	"github.com/uvwt/agentdock/internal/runtimeapi"
+	"github.com/uvwt/agentdock/internal/secretredact"
 )
 
 const (
-	maxMessageBytes    = 8 << 20
-	invokeDrainTimeout = 5 * time.Second
+	maxMessageBytes      = 8 << 20
+	invokeDrainTimeout   = 5 * time.Second
+	maxReconnectBackoff  = 30 * time.Second
+	readyReadTimeout     = 15 * time.Second
+	tailcatDialErrorCode = "TAILCAT_NODE_DIAL"
 )
+
+// errTailcatDial 表示 Nexus 已经保存了连接串，出站升级会被 409 拒绝。
+// 入站会话不受这次失败影响。之后按上限退避探测，连接串清空后才能恢复出站。
+var errTailcatDial = errors.New("NexusDock Tailcat dial-in is active")
+
+var inboundUpgrader = websocket.Upgrader{
+	HandshakeTimeout: 10 * time.Second,
+	// Nexus 的拨号请求没有 Origin，也不能把 Origin 当成身份。
+	CheckOrigin: func(*http.Request) bool { return true },
+}
 
 // NodeAPI 由 Nexus Bridge 消费方定义，只包含握手和远程 operation 真正需要的节点能力。
 type NodeAPI interface {
@@ -47,13 +64,20 @@ type Client struct {
 	artifacts publicartifacts.Store
 	state     *ConnectionState
 	invokeWG  sync.WaitGroup
-	writeMu   sync.Mutex
-	cancelMu  sync.Mutex
-	cancels   map[string]context.CancelFunc
+}
+
+// liveSession 是一条已经升级的节点 WebSocket。
+// 写锁和取消表都在会话上：稳定会话断开后 Nexus 会马上重拨，新旧两条连接会短暂重叠。
+// 旧连接的写超时不能挡住新连接的 node.hello，Nexus 只等第一条消息 15 秒。
+type liveSession struct {
+	socket   *websocket.Conn
+	writeMu  sync.Mutex
+	cancelMu sync.Mutex
+	cancels  map[string]context.CancelFunc
 }
 
 func NewClient(identity Identity, node NodeAPI, runtime runtimeapi.Runtime, artifacts publicartifacts.Store, state *ConnectionState) *Client {
-	return &Client{identity: identity, node: node, runtime: runtime, artifacts: artifacts, state: state, cancels: make(map[string]context.CancelFunc)}
+	return &Client{identity: identity, node: node, runtime: runtime, artifacts: artifacts, state: state}
 }
 
 func (c *Client) Run(ctx context.Context) {
@@ -64,16 +88,24 @@ func (c *Client) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		slog.Warn("NexusDock connection lost", "error", err, "retry_in", backoff)
-		timer := time.NewTimer(backoff + time.Duration(rand.IntN(500))*time.Millisecond)
+		wait := backoff
+		if errors.Is(err, errTailcatDial) {
+			// 409 之后不要从 1 秒开始猛连。30 秒探测一次，管理员清空连接串后出站还能回来。
+			wait = maxReconnectBackoff
+			backoff = maxReconnectBackoff
+			slog.Warn("NexusDock Tailcat dial-in is active; outbound connect paused", "retry_in", wait)
+		} else {
+			slog.Warn("NexusDock connection lost", "error", secretredact.Text(err.Error()), "retry_in", wait)
+			if backoff < maxReconnectBackoff {
+				backoff *= 2
+			}
+		}
+		timer := time.NewTimer(wait + time.Duration(rand.IntN(500))*time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return
 		case <-timer.C:
-		}
-		if backoff < 30*time.Second {
-			backoff *= 2
 		}
 	}
 }
@@ -91,8 +123,56 @@ func (c *Client) drainInvocations() {
 	}
 }
 
+// Serve 在 Tailcat 拨进来的 TCP 上接受节点 WebSocket。调用方负责这条监听的生命周期。
+func (c *Client) Serve(ctx context.Context, ln net.Listener) error {
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c.serveInbound(ctx, w, r)
+		}),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = server.Shutdown(shutdownCtx)
+		case <-done:
+		}
+	}()
+	err := server.Serve(ln)
+	close(done)
+	if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+		return nil
+	}
+	return err
+}
+
+func (c *Client) serveInbound(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/v1/nodes/connect" {
+		http.NotFound(w, r)
+		return
+	}
+	// 隧道上的认证是连接串里的预共享密钥。这里不看 Authorization，也不要求 Origin。
+	socket, err := inboundUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	// 会话在本地结束时必须关掉 TCP。defer 顺序是先解除 AfterFunc，再关闭连接；
+	// 否则 stop 会拆掉关闭回调，Nexus 要一直读到两个心跳的超时才知道这条会话没了。
+	// 撑过一个心跳的断开会被马上重拨，没撑过的走退避。
+	defer socket.Close()
+	sessionCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(sessionCtx, func() { _ = socket.Close() })
+	defer stop()
+	if err := c.runSession(sessionCtx, socket); err != nil && ctx.Err() == nil {
+		slog.Warn("NexusDock inbound session ended", "error", secretredact.Text(err.Error()))
+	}
+}
+
 func (c *Client) connect(ctx context.Context) error {
-	c.state.SetConnected(false)
 	endpoint, err := url.Parse(c.identity.Endpoint)
 	if err != nil {
 		return err
@@ -106,29 +186,49 @@ func (c *Client) connect(ctx context.Context) error {
 	header := http.Header{"Authorization": []string{"Bearer " + c.identity.DeviceToken}}
 	socket, response, err := websocket.DefaultDialer.DialContext(ctx, endpoint.String(), header)
 	if err != nil {
-		if response != nil {
-			return fmt.Errorf("连接 NexusDock（HTTP %d）: %w", response.StatusCode, err)
-		}
-		return fmt.Errorf("连接 NexusDock: %w", err)
+		return dialError(response, err)
 	}
 	defer socket.Close()
 	// gorilla/websocket 的阻塞读取不会自动观察 context；父 Context 取消时主动关闭连接，
 	// 让 ReadJSON 立即返回，确保 Bridge 能在 Runtime 关闭前退出。
 	stopContextClose := context.AfterFunc(ctx, func() { _ = socket.Close() })
 	defer stopContextClose()
+	return c.runSession(ctx, socket)
+}
+
+func dialError(response *http.Response, err error) error {
+	if response == nil {
+		return fmt.Errorf("连接 NexusDock: %w", err)
+	}
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
+	_ = response.Body.Close()
+	if response.StatusCode == http.StatusConflict && bytes.Contains(body, []byte(tailcatDialErrorCode)) {
+		return errTailcatDial
+	}
+	text := secretredact.Text(strings.TrimSpace(string(body)))
+	if text == "" {
+		return fmt.Errorf("连接 NexusDock（HTTP %d）: %w", response.StatusCode, err)
+	}
+	return fmt.Errorf("连接 NexusDock（HTTP %d）: %s: %w", response.StatusCode, text, err)
+}
+
+func (c *Client) runSession(ctx context.Context, socket *websocket.Conn) error {
 	socket.SetReadLimit(maxMessageBytes)
+	session := &liveSession{socket: socket, cancels: make(map[string]context.CancelFunc)}
 
 	tools := c.node.ToolNames()
 	descriptors, err := bridgeToolDescriptors(c.node.ToolDescriptors())
 	if err != nil {
 		return err
 	}
-	if err := c.write(socket, protocol.Message{
+	if err := session.write(protocol.Message{
 		Type: protocol.MessageNodeHello, ProtocolVersion: protocol.ConnectionProtocolVersion,
 		Hello: bridgeHello(c.identity, tools, descriptors, c.node.UIResources(), c.node.ToolContractHash()),
 	}); err != nil {
 		return err
 	}
+	// Nexus 等第一条消息的期限是 15 秒。这里用同一期限等 node.ready，避免握手卡住时占着连接。
+	_ = socket.SetReadDeadline(time.Now().Add(readyReadTimeout))
 	var ready protocol.Message
 	if err := socket.ReadJSON(&ready); err != nil {
 		return fmt.Errorf("读取 NexusDock 握手响应: %w", err)
@@ -148,8 +248,8 @@ func (c *Client) connect(ctx context.Context) error {
 			}
 		}()
 	}
-	c.state.SetConnected(true)
-	defer c.state.SetConnected(false)
+	detach := c.state.Attach()
+	defer detach()
 	slog.Info("NexusDock node connected", "node_id", c.identity.NodeID, "endpoint", c.identity.Endpoint)
 	heartbeat := time.Duration(ready.HeartbeatMS) * time.Millisecond
 	if heartbeat <= 0 {
@@ -157,27 +257,35 @@ func (c *Client) connect(ctx context.Context) error {
 	}
 	connectionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go c.heartbeat(connectionCtx, socket, heartbeat)
+	// 读超时与 Nexus 一致：两个心跳。期间没有消息就结束会话，对方才能按断开去重拨或退避。
+	readTimeout := 2 * heartbeat
+	_ = socket.SetReadDeadline(time.Now().Add(readTimeout))
+	go c.heartbeat(connectionCtx, session, heartbeat)
 	for {
 		var incoming protocol.Message
 		if err := socket.ReadJSON(&incoming); err != nil {
 			return err
 		}
+		_ = socket.SetReadDeadline(time.Now().Add(readTimeout))
 		switch incoming.Type {
 		case protocol.MessageToolInvoke:
 			c.invokeWG.Add(1)
 			go func() {
 				defer c.invokeWG.Done()
-				c.invoke(connectionCtx, socket, incoming)
+				c.invoke(connectionCtx, session, incoming)
 			}()
 		case protocol.MessageToolCancel:
-			c.cancel(incoming.RequestID)
+			session.cancel(incoming.RequestID)
 		case protocol.MessageNodeHeartbeat:
 		}
 	}
 }
 
 func bridgeHello(identity Identity, tools []string, descriptors []protocol.ToolDescriptor, uiResources []protocol.UIResourceCapability, toolContractHash string) *protocol.Hello {
+	if uiResources == nil {
+		// Nexus 拒绝省略或 null。没有界面资源时必须是空数组。
+		uiResources = []protocol.UIResourceCapability{}
+	}
 	return &protocol.Hello{
 		DeviceID:           identity.DeviceID,
 		Version:            buildinfo.Version,
@@ -192,23 +300,23 @@ func bridgeHello(identity Identity, tools []string, descriptors []protocol.ToolD
 	}
 }
 
-func (c *Client) invoke(parent context.Context, socket *websocket.Conn, incoming protocol.Message) {
+func (c *Client) invoke(parent context.Context, session *liveSession, incoming protocol.Message) {
 	ctx, cancel := context.WithCancel(parent)
 	ctx = extractBridgeTraceContext(ctx, &incoming)
-	c.cancelMu.Lock()
-	c.cancels[incoming.RequestID] = cancel
-	c.cancelMu.Unlock()
+	session.cancelMu.Lock()
+	session.cancels[incoming.RequestID] = cancel
+	session.cancelMu.Unlock()
 	defer func() {
 		recovered := recover()
 		cancel()
-		c.cancelMu.Lock()
-		delete(c.cancels, incoming.RequestID)
-		c.cancelMu.Unlock()
+		session.cancelMu.Lock()
+		delete(session.cancels, incoming.RequestID)
+		session.cancelMu.Unlock()
 		if recovered != nil {
 			// Nexus Bridge 是远程 RPC 边界。单次工具 panic 只结束当前请求，
 			// 避免把整个 AgentDock 守护进程和其他本地会话一并带崩。
 			slog.Error("NexusDock node operation panicked", "request_id", incoming.RequestID, "operation", incoming.Operation, "panic", recovered, "stack", string(debug.Stack()))
-			_ = c.write(socket, protocol.Message{
+			_ = session.write(protocol.Message{
 				Type:      protocol.MessageToolError,
 				RequestID: incoming.RequestID,
 				Error:     &protocol.RemoteError{Code: "NODE_OPERATION_FAILED", Message: "AgentDock node operation failed", Category: "internal"},
@@ -263,15 +371,15 @@ func (c *Client) invoke(parent context.Context, socket *websocket.Conn, incoming
 		err = fmt.Errorf("不支持的 NexusDock 节点操作: %s", incoming.Operation)
 	}
 	if err != nil {
-		_ = c.write(socket, protocol.Message{Type: protocol.MessageToolError, RequestID: incoming.RequestID, Error: bridgeError(err)})
+		_ = session.write(protocol.Message{Type: protocol.MessageToolError, RequestID: incoming.RequestID, Error: bridgeError(err)})
 		return
 	}
 	encoded, encodeErr := json.Marshal(result)
 	if encodeErr != nil {
-		_ = c.write(socket, protocol.Message{Type: protocol.MessageToolError, RequestID: incoming.RequestID, Error: bridgeError(fmt.Errorf("编码节点结果: %w", encodeErr))})
+		_ = session.write(protocol.Message{Type: protocol.MessageToolError, RequestID: incoming.RequestID, Error: bridgeError(fmt.Errorf("编码节点结果: %w", encodeErr))})
 		return
 	}
-	_ = c.write(socket, protocol.Message{Type: protocol.MessageToolResult, RequestID: incoming.RequestID, Result: encoded})
+	_ = session.write(protocol.Message{Type: protocol.MessageToolResult, RequestID: incoming.RequestID, Result: encoded})
 }
 
 func (c *Client) dispatchRuntimeRequest(ctx context.Context, request runtimeapi.Request) (map[string]any, error) {
@@ -294,7 +402,7 @@ func bridgeToolDescriptors(descriptors []map[string]any) ([]protocol.ToolDescrip
 	return tools, nil
 }
 
-func (c *Client) heartbeat(ctx context.Context, socket *websocket.Conn, interval time.Duration) {
+func (c *Client) heartbeat(ctx context.Context, session *liveSession, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -302,25 +410,25 @@ func (c *Client) heartbeat(ctx context.Context, socket *websocket.Conn, interval
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := c.write(socket, protocol.Message{Type: protocol.MessageNodeHeartbeat}); err != nil {
-				_ = socket.Close()
+			if err := session.write(protocol.Message{Type: protocol.MessageNodeHeartbeat}); err != nil {
+				_ = session.socket.Close()
 				return
 			}
 		}
 	}
 }
 
-func (c *Client) write(socket *websocket.Conn, outgoing protocol.Message) error {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	_ = socket.SetWriteDeadline(time.Now().Add(15 * time.Second))
-	return socket.WriteJSON(outgoing)
+func (s *liveSession) write(outgoing protocol.Message) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_ = s.socket.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	return s.socket.WriteJSON(outgoing)
 }
 
-func (c *Client) cancel(requestID string) {
-	c.cancelMu.Lock()
-	cancel := c.cancels[requestID]
-	c.cancelMu.Unlock()
+func (s *liveSession) cancel(requestID string) {
+	s.cancelMu.Lock()
+	cancel := s.cancels[requestID]
+	s.cancelMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}

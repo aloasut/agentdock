@@ -189,7 +189,7 @@ begin
   StartupPage.Values[1] := RuntimeUsesElevatedCore() or LegacyAgentDockScheduledTaskExists();
 
   Mode := Lowercase(ReadTrimmedTextFile(AddBackslash(ExistingInstallRoot()) + 'cloudflared-mode.txt'));
-  if Mode = 'quick' then
+  if (Mode = 'quick') or (Mode = 'tailcat') then
     ConnectionPage.SelectedValueIndex := 1
   else if Mode = 'named' then
   begin
@@ -261,9 +261,21 @@ begin
 end;
 
 function SelectedTunnelMode(): String;
+var
+  Stored: String;
 begin
+  { 保留现有设置的升级必须原样带回 quick，不能因为安装页把该选项换成 Tailcat 就改写模式。 }
+  if ExistingInstallDetected and (UpgradeModePage.SelectedValueIndex = 0) then
+  begin
+    Stored := Lowercase(ReadTrimmedTextFile(AddBackslash(ExistingInstallRoot()) + 'cloudflared-mode.txt'));
+    if (Stored = 'none') or (Stored = 'quick') or (Stored = 'tailcat') or (Stored = 'named') then
+      Result := Stored
+    else
+      Result := 'none';
+    Exit;
+  end;
   case ConnectionPage.SelectedValueIndex of
-    1: Result := 'quick';
+    1: Result := 'tailcat';
     2: Result := 'named';
   else
     Result := 'none';
@@ -329,7 +341,7 @@ begin
   LoadExistingSettings();
 
   ModeParam := Lowercase(ExpandConstant('{param:MODE|}'));
-  if ModeParam = 'quick' then
+  if (ModeParam = 'quick') or (ModeParam = 'tailcat') then
     ConnectionPage.SelectedValueIndex := 1
   else if ModeParam = 'named' then
     ConnectionPage.SelectedValueIndex := 2

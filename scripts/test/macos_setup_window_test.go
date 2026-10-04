@@ -28,7 +28,7 @@ func TestMacOSSetupWindowUsesResponsiveScrollableLayout(t *testing.T) {
 		`contentStack.leadingAnchor.constraint(equalTo: scrollDocumentView.leadingAnchor, constant: 28)`,
 		`contentStack.bottomAnchor.constraint(equalTo: scrollDocumentView.bottomAnchor, constant: -22)`,
 		`let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame`,
-		`let installedHeight: CGFloat = selectedMode == .named ? 620 : 580`,
+		`let installedHeight: CGFloat = selectedMode == .tailcat ? 720 : (selectedMode == .named ? 620 : 580)`,
 		`publicAddress.lineBreakMode = .byCharWrapping`,
 		`publicAddress.maximumNumberOfLines = 2`,
 		`L10n.text("Check permissions")`,

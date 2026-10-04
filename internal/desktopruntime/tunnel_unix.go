@@ -16,6 +16,7 @@ import (
 
 	"github.com/uvwt/agentdock/internal/envstore"
 	"github.com/uvwt/agentdock/internal/fs/atomicfile"
+	"github.com/uvwt/agentdock/internal/tailcatnode"
 )
 
 func loadTunnelEnvironment(runtimeRoot string) (unixRuntimeManifest, string, map[string]string, error) {
@@ -32,7 +33,7 @@ func loadTunnelEnvironment(runtimeRoot string) (unixRuntimeManifest, string, map
 
 func tunnelMode(values map[string]string) string {
 	mode := strings.ToLower(strings.TrimSpace(values["AGENTDOCK_TUNNEL_MODE"]))
-	if mode != "quick" && mode != "named" {
+	if mode != "quick" && mode != "named" && mode != "tailcat" {
 		return "none"
 	}
 	return mode
@@ -47,6 +48,9 @@ func platformTunnelStatus(ctx context.Context, runtimeRoot string) (TunnelStatus
 		return TunnelStatus{}, err
 	}
 	mode := tunnelMode(values)
+	if mode == "tailcat" {
+		return tailcatTunnelStatus(root), nil
+	}
 	running := tunnelServiceActive(ctx, manifest)
 	publicURL := ""
 	if mode == "quick" {
@@ -77,8 +81,14 @@ func platformTunnelAction(ctx context.Context, runtimeRoot, action string) error
 		return errors.New("Tunnel 模式为 none")
 	}
 	if action == "regenerate" {
+		if mode == "tailcat" {
+			if err := tailcatnode.RotateSecrets(root); err != nil {
+				return err
+			}
+			return platformServiceAction(ctx, runtimeRoot, "restart")
+		}
 		if mode != "quick" {
-			return errors.New("只有 Quick Tunnel 可以重新生成地址")
+			return errors.New("只有临时地址或 Tailcat 模式可以重新生成连接")
 		}
 		_ = os.Remove(filepath.Join(root, "quick-tunnel-url.txt"))
 		action = "restart"
@@ -112,6 +122,12 @@ func platformConfigureTunnel(ctx context.Context, request TunnelConfigureRequest
 		tunnelValues["AGENTDOCK_TUNNEL_TARGET"] = strings.TrimSuffix(healthURL(core), "/healthz")
 		delete(core, "AGENTDOCK_SERVER_URL")
 		core["AGENTDOCK_OAUTH_ENABLED"] = "true"
+	case "tailcat":
+		delete(core, "AGENTDOCK_SERVER_URL")
+		core["AGENTDOCK_OAUTH_ENABLED"] = "false"
+		if err := tailcatnode.EnsureConfig(root, request.TailcatPort, request.TailcatAllow, request.TailcatAllowSet); err != nil {
+			return err
+		}
 	case "named":
 		origin, err := normalizeHTTPSOrigin(request.ServerURL)
 		if err != nil {
@@ -127,7 +143,7 @@ func platformConfigureTunnel(ctx context.Context, request TunnelConfigureRequest
 		core["AGENTDOCK_SERVER_URL"] = origin
 		core["AGENTDOCK_OAUTH_ENABLED"] = "true"
 	default:
-		return errors.New("Tunnel 模式必须是 none、quick 或 named")
+		return errors.New("Tunnel 模式必须是 none、tailcat、quick 或 named")
 	}
 	if err := writeEnvironment(manifest.EnvironmentFile, core); err != nil {
 		return err
@@ -138,7 +154,8 @@ func platformConfigureTunnel(ctx context.Context, request TunnelConfigureRequest
 	if err := platformServiceAction(ctx, request.RuntimeRoot, "restart"); err != nil {
 		return err
 	}
-	if mode != "none" {
+	// Tailcat 由核心进程监听，不再拉起 cloudflared。macOS 的开机注册由 App 自己关掉。
+	if mode != "none" && mode != "tailcat" {
 		return tunnelServiceAction(ctx, manifest, "start")
 	}
 	return nil
@@ -202,6 +219,9 @@ func platformLaunchTunnel(ctx context.Context, runtimeRoot string) error {
 	}
 	mode := tunnelMode(values)
 	switch mode {
+	case "tailcat":
+		// Tailcat 跑在核心进程里。误启动的 tunnel agent 直接退出，避免再拉起 cloudflared。
+		return nil
 	case "quick":
 		target := strings.TrimSpace(values["AGENTDOCK_TUNNEL_TARGET"])
 		if target == "" {

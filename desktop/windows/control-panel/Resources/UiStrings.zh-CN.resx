@@ -132,6 +132,45 @@
   <data name="RegenerateTemporaryAddress" xml:space="preserve">
     <value>重新生成临时地址</value>
   </data>
+  <data name="Tailcat" xml:space="preserve">
+    <value>Tailcat</value>
+  </data>
+  <data name="TailcatDescription" xml:space="preserve">
+    <value>在这台电脑上运行 Tailcat 服务。把连接串和 TCP 端口填进 NexusDock 节点，由 NexusDock 拨入。这个模式不发布公网 MCP 地址。</value>
+  </data>
+  <data name="TailcatConfiguration" xml:space="preserve">
+    <value>Tailcat</value>
+  </data>
+  <data name="TailcatPort" xml:space="preserve">
+    <value>TCP 端口</value>
+  </data>
+  <data name="TailcatAllow" xml:space="preserve">
+    <value>允许的客户端</value>
+  </data>
+  <data name="TailcatAllowHelp" xml:space="preserve">
+    <value>nodekey: 加 64 位十六进制。留空表示持有连接串的客户端都可以拨入。</value>
+  </data>
+  <data name="TailcatConnectionString" xml:space="preserve">
+    <value>连接串</value>
+  </data>
+  <data name="ResetTailcatConnection" xml:space="preserve">
+    <value>重置连接串</value>
+  </data>
+  <data name="TailcatNoPublicMCP" xml:space="preserve">
+    <value>Tailcat 不发布公网 MCP 地址。把连接串和 TCP 端口填进 NexusDock 节点。</value>
+  </data>
+  <data name="TailcatPortInvalid" xml:space="preserve">
+    <value>Tailcat 端口必须在 1 到 65535 之间。</value>
+  </data>
+  <data name="WaitingForTailcat" xml:space="preserve">
+    <value>正在等待 Tailcat 连接串…</value>
+  </data>
+  <data name="ConnectionStringCopied" xml:space="preserve">
+    <value>连接串已复制。</value>
+  </data>
+  <data name="Copy" xml:space="preserve">
+    <value>复制</value>
+  </data>
   <data name="AdvancedSettings" xml:space="preserve">
     <value>高级设置</value>
   </data>

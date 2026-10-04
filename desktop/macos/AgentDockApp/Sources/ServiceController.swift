@@ -216,15 +216,28 @@ final class ServiceController: @unchecked Sendable {
         return status == .enabled || status == .requiresApproval
     }
 
-    func configuredTunnelMode() throws -> TunnelMode {
+    func configuredTunnelModeRaw() throws -> String {
         guard FileManager.default.fileExists(atPath: paths.tunnelEnvironment.path) else {
-            return .local
+            return ""
         }
         let environment = try ManagedEnvironment.load(from: paths.tunnelEnvironment)
-        let rawMode = environment.values["AGENTDOCK_TUNNEL_MODE"]?
+        return environment.values["AGENTDOCK_TUNNEL_MODE"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
-        return TunnelMode(rawValue: rawMode) ?? .local
+    }
+
+    func configuredTunnelMode() throws -> TunnelMode {
+        switch try configuredTunnelModeRaw() {
+        case "tailcat", "quick":
+            // 已保存的 quick 只在界面上显示为 Tailcat。真正改写成 tailcat 发生在用户应用配置时。
+            return .tailcat
+        case "named":
+            return .named
+        case "lan":
+            return .lan
+        default:
+            return .local
+        }
     }
 
     func reconcileTunnelRegistrationFromConfiguration() throws {
@@ -232,12 +245,24 @@ final class ServiceController: @unchecked Sendable {
         guard !LegacyDesktopRuntimeMigration.isPresent(paths: paths) else { return }
 
         // 这里只收敛“是否应注册”的长期配置，不等待 cloudflared 或公网 ready。
-        // 更新 handoff 已负责重新绑定目标 App；普通启动也不应因短暂网络状态重建 SMAppService。
-        switch try configuredTunnelMode() {
-        case .local, .lan:
-            try setTunnelEnabled(false)
-        case .quick, .named:
+        // 已保存的 quick 仍注册 cloudflared，直到用户应用 Tailcat 后模式文件变成 tailcat。
+        switch try configuredTunnelModeRaw() {
+        case "quick", "named":
             try setTunnelEnabled(true)
+        default:
+            try setTunnelEnabled(false)
+        }
+    }
+
+    func regenerateTailcat() async throws {
+        let result = try await runInBackground {
+            try runProcess(
+                executable: self.paths.binary.path,
+                arguments: ["tunnel", "regenerate", "--runtime-root", self.paths.appSupport.path]
+            )
+        }
+        guard result.status == 0 else {
+            throw ValidationError(commandError(result.output, action: L10n.text("Reset connection string")))
         }
     }
 

@@ -38,8 +38,8 @@ func platformLaunchTunnel(ctx context.Context, runtimeRoot string) error {
 	if err != nil {
 		return err
 	}
-	if runtime.mode == "none" {
-		return errors.New("Tunnel 模式为 none")
+	if runtime.mode == "none" || runtime.mode == "tailcat" {
+		return nil
 	}
 
 	guard, err := acquireTunnelSupervisor(runtime.root)
@@ -76,7 +76,7 @@ func platformLaunchTunnel(ctx context.Context, runtimeRoot string) error {
 		if err != nil {
 			return err
 		}
-		if runtime.mode == "none" {
+		if runtime.mode == "none" || runtime.mode == "tailcat" {
 			return nil
 		}
 
@@ -157,6 +157,9 @@ func platformTunnelStatus(ctx context.Context, runtimeRoot string) (TunnelStatus
 	if err != nil {
 		return TunnelStatus{}, err
 	}
+	if runtime.mode == "tailcat" {
+		return tailcatTunnelStatus(runtime.root), nil
+	}
 	running, err := processRunningAtPath(runtime.manifest.CloudflaredBinary)
 	if err != nil {
 		return TunnelStatus{}, err
@@ -204,8 +207,14 @@ func platformTunnelAction(ctx context.Context, runtimeRoot, action string) error
 		}
 		return startTunnel(ctx, runtime)
 	case "regenerate":
+		if runtime.mode == "tailcat" {
+			if err := rotateTailcat(runtime.root); err != nil {
+				return err
+			}
+			return platformServiceAction(ctx, runtime.root, "restart")
+		}
 		if runtime.mode != "quick" {
-			return errors.New("只有临时地址模式可以重新生成 Quick Tunnel")
+			return errors.New("只有临时地址或 Tailcat 模式可以重新生成连接")
 		}
 		return regenerateQuickTunnel(ctx, runtime)
 	default:
@@ -231,7 +240,7 @@ func captureTunnelLogCursors(files tunnelFiles) (tunnelLogCursors, error) {
 }
 
 func startTunnel(ctx context.Context, runtime tunnelRuntime) error {
-	if runtime.mode == "none" {
+	if runtime.mode == "none" || runtime.mode == "tailcat" {
 		return nil
 	}
 	if info, err := os.Stat(runtime.manifest.CloudflaredBinary); err != nil || info.IsDir() {

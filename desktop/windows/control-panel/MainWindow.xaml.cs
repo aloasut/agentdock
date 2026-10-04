@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     private string _oauthPassword = "";
     private bool _showBearer;
     private bool _showOAuth;
+    private bool _showTailcatAddress;
     private bool _updatingUi;
     private bool _settingsLoaded;
     private List<AcpProfileSettings> _acpProfiles = [];
@@ -108,14 +109,31 @@ public partial class MainWindow : Window
             VersionText.Text = string.IsNullOrWhiteSpace(snapshot.Version) ? UiText.Get("Unknown") : snapshot.Version;
             RuntimeAnalyticsButton.IsEnabled = snapshot.CoreRunning;
             LocalMcpTextBox.Text = snapshot.LocalMcpUrl;
-            PublicMcpTextBox.Text = snapshot.PublicMcpUrl;
+            UpdatePublicAddress(snapshot);
             UpdateCredentialText();
 
-            LocalModeRadio.IsChecked = string.Equals(snapshot.TunnelMode, "none", StringComparison.OrdinalIgnoreCase);
-            QuickModeRadio.IsChecked = string.Equals(snapshot.TunnelMode, "quick", StringComparison.OrdinalIgnoreCase);
-            NamedModeRadio.IsChecked = string.Equals(snapshot.TunnelMode, "named", StringComparison.OrdinalIgnoreCase);
-            // LAN 与隧道互斥且同组，最后赋值让它覆盖上面按隧道模式选中的 Local 选项。
-            LanModeRadio.IsChecked = IsLanListenMode(snapshot.ListenMode);
+            var tunnelMode = snapshot.TunnelMode ?? "";
+            LocalModeRadio.IsChecked = string.Equals(tunnelMode, "none", StringComparison.OrdinalIgnoreCase);
+            NamedModeRadio.IsChecked = string.Equals(tunnelMode, "named", StringComparison.OrdinalIgnoreCase);
+            // 已保存的 quick 仍会跑 cloudflared，但界面选中 Tailcat，下一次应用才改写成 tailcat。
+            TailcatModeRadio.IsChecked = string.Equals(tunnelMode, "tailcat", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(tunnelMode, "quick", StringComparison.OrdinalIgnoreCase);
+            LanModeRadio.IsChecked = IsLanListenMode(snapshot.ListenMode)
+                && !string.Equals(tunnelMode, "tailcat", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(tunnelMode, "named", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(tunnelMode, "quick", StringComparison.OrdinalIgnoreCase);
+            if (!TailcatPortTextBox.IsKeyboardFocusWithin)
+            {
+                TailcatPortTextBox.Text = snapshot.TailcatPort > 0 ? snapshot.TailcatPort.ToString() : "80";
+            }
+            if (!TailcatAllowTextBox.IsKeyboardFocusWithin)
+            {
+                TailcatAllowTextBox.Text = snapshot.TailcatAllow ?? "";
+            }
+            TailcatHelpText.Text = string.IsNullOrWhiteSpace(snapshot.TailcatError)
+                ? UiText.Get("TailcatAllowHelp")
+                : snapshot.TailcatError;
+            UpdateTailcatAddressText(snapshot);
             if (!ServerUrlTextBox.IsKeyboardFocusWithin &&
                 (string.Equals(snapshot.TunnelMode, "named", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(ServerUrlTextBox.Text)))
             {
@@ -167,6 +185,13 @@ public partial class MainWindow : Window
 
     private async Task AutoTestPublicAsync(RuntimeSnapshot snapshot)
     {
+        if (IsTailcatMode(snapshot.TunnelMode))
+        {
+            PublicTestStatusText.Text = string.IsNullOrWhiteSpace(snapshot.TailcatError)
+                ? UiText.Get("TailcatNoPublicMCP")
+                : snapshot.TailcatError;
+            return;
+        }
         if (string.IsNullOrWhiteSpace(snapshot.PublicOrigin))
         {
             PublicTestStatusText.Text = snapshot.TunnelMode == "quick" ? UiText.Get("WaitingTemporaryAddress") : UiText.Get("PublicAddressNotConfigured");
@@ -262,6 +287,11 @@ public partial class MainWindow : Window
 
     private async void TestPublicButton_Click(object sender, RoutedEventArgs e)
     {
+        if (IsTailcatMode(_snapshot?.TunnelMode))
+        {
+            CopyTailcatAddress();
+            return;
+        }
         var origin = _snapshot?.PublicOrigin ?? "";
         if (string.IsNullOrWhiteSpace(origin))
         {
@@ -284,9 +314,10 @@ public partial class MainWindow : Window
     private void UpdateTunnelModeUi()
     {
         var named = NamedModeRadio.IsChecked == true;
-        var quick = QuickModeRadio.IsChecked == true;
+        var tailcat = TailcatModeRadio.IsChecked == true;
         NamedTunnelGroup.IsEnabled = named;
-        RegenerateQuickButton.IsEnabled = quick;
+        TailcatGroup.IsEnabled = tailcat;
+        ResetTailcatButton.IsEnabled = tailcat && IsTailcatMode(_snapshot?.TunnelMode);
     }
 
     private static bool IsLanListenMode(string? listenMode) =>
@@ -299,9 +330,9 @@ public partial class MainWindow : Window
         {
             return "none";
         }
-        if (QuickModeRadio.IsChecked == true)
+        if (TailcatModeRadio.IsChecked == true)
         {
-            return "quick";
+            return "tailcat";
         }
         if (NamedModeRadio.IsChecked == true)
         {
@@ -314,12 +345,6 @@ public partial class MainWindow : Window
     {
         var lanAccess = LanModeRadio.IsChecked == true;
         var mode = SelectedTunnelMode();
-        if (mode == "quick")
-        {
-            PublicMcpTextBox.Text = "";
-            PublicTestStatusText.Text = UiText.Get("GeneratingTemporaryAddress");
-            _lastAutoTestOrigin = "";
-        }
         if (lanAccess)
         {
             await ExecuteActionAsync(
@@ -333,6 +358,24 @@ public partial class MainWindow : Window
                 },
                 TunnelActionStatusText);
             TunnelTokenPasswordBox.Clear();
+            return;
+        }
+        if (mode == "tailcat")
+        {
+            if (!int.TryParse(TailcatPortTextBox.Text.Trim(), out var tailcatPort) || tailcatPort < 1 || tailcatPort > 65535)
+            {
+                TunnelActionStatusText.Text = UiText.Get("TailcatPortInvalid");
+                return;
+            }
+            var tailcatApplied = await ExecuteActionAsync(
+                UiText.Get("SwitchingPublicAccess"),
+                () => _runtime.SetTunnelModeAsync("tailcat", "", "", tailcatPort, TailcatAllowTextBox.Text, true),
+                TunnelActionStatusText,
+                "tunnel-configure");
+            if (tailcatApplied && IsLanListenMode(_snapshot?.ListenMode))
+            {
+                await SaveListenModeAsync("loopback");
+            }
             return;
         }
         var applied = await ExecuteActionAsync(
@@ -356,18 +399,72 @@ public partial class MainWindow : Window
         return _runtime.SaveSettingsAsync(settings, cancellationToken);
     }
 
-    private async void RegenerateQuickButton_Click(object sender, RoutedEventArgs e)
+    private async void ResetTailcatButton_Click(object sender, RoutedEventArgs e)
     {
-        PublicMcpTextBox.Text = "";
-        PublicTestStatusText.Text = UiText.Get("GeneratingTemporaryAddress");
-        TunnelActionStatusText.Text = UiText.Get("OldAddressHidden");
-        _lastAutoTestOrigin = "";
+        _showTailcatAddress = false;
+        TailcatAddressTextBox.Text = "";
+        if (IsTailcatMode(_snapshot?.TunnelMode))
+        {
+            PublicMcpTextBox.Text = UiText.Get("WaitingForTailcat");
+        }
         await ExecuteActionAsync(
-            UiText.Get("OldAddressHidden"),
-            () => _runtime.RegenerateQuickTunnelAsync(),
+            UiText.Get("WaitingForTailcat"),
+            () => _runtime.ResetTailcatConnectionAsync(),
             TunnelActionStatusText,
             "tunnel-regenerate");
     }
+
+    private void ToggleTailcatAddressButton_Click(object sender, RoutedEventArgs e)
+    {
+        _showTailcatAddress = !_showTailcatAddress;
+        if (_snapshot != null)
+        {
+            UpdateTailcatAddressText(_snapshot);
+            UpdatePublicAddress(_snapshot);
+        }
+    }
+
+    private void CopyTailcatAddressButton_Click(object sender, RoutedEventArgs e) => CopyTailcatAddress();
+
+    private void CopyTailcatAddress()
+    {
+        var address = _snapshot?.TailcatAddress ?? "";
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            TunnelActionStatusText.Text = UiText.Get("WaitingForTailcat");
+            return;
+        }
+        Clipboard.SetText(address);
+        TunnelActionStatusText.Text = UiText.Get("ConnectionStringCopied");
+    }
+
+    private void UpdatePublicAddress(RuntimeSnapshot snapshot)
+    {
+        if (IsTailcatMode(snapshot.TunnelMode))
+        {
+            PublicAddressLabel.Text = UiText.Get("Tailcat");
+            PublicMcpTextBox.Text = DisplayTailcatAddress(snapshot.TailcatAddress);
+            PublicAddressActionButton.Content = UiText.Get("Copy");
+            return;
+        }
+        PublicAddressLabel.Text = UiText.Get("PublicMCP");
+        PublicMcpTextBox.Text = snapshot.PublicMcpUrl;
+        PublicAddressActionButton.Content = UiText.Get("Test");
+    }
+
+    private void UpdateTailcatAddressText(RuntimeSnapshot snapshot)
+    {
+        TailcatAddressTextBox.Text = DisplayTailcatAddress(snapshot.TailcatAddress);
+        ToggleTailcatAddressButton.Content = _showTailcatAddress ? UiText.Get("Hide") : UiText.Get("Show");
+    }
+
+    private string DisplayTailcatAddress(string address) =>
+        string.IsNullOrEmpty(address)
+            ? UiText.Get("WaitingForTailcat")
+            : _showTailcatAddress ? address : MaskSecret(address);
+
+    private static bool IsTailcatMode(string? mode) =>
+        string.Equals(mode, "tailcat", StringComparison.OrdinalIgnoreCase);
 
     private void AcpOverviewToggle_Changed(object sender, RoutedEventArgs e)
     {
