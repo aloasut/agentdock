@@ -64,6 +64,8 @@ type Client struct {
 	artifacts publicartifacts.Store
 	state     *ConnectionState
 	invokeWG  sync.WaitGroup
+	// wake 让出站在入站会话全部结束后立刻再探测。缓冲 1 个，避免拨入抖动把探测排成一串。
+	wake chan struct{}
 }
 
 // liveSession 是一条已经升级的节点 WebSocket。
@@ -77,7 +79,10 @@ type liveSession struct {
 }
 
 func NewClient(identity Identity, node NodeAPI, runtime runtimeapi.Runtime, artifacts publicartifacts.Store, state *ConnectionState) *Client {
-	return &Client{identity: identity, node: node, runtime: runtime, artifacts: artifacts, state: state}
+	return &Client{
+		identity: identity, node: node, runtime: runtime, artifacts: artifacts, state: state,
+		wake: make(chan struct{}, 1),
+	}
 }
 
 func (c *Client) Run(ctx context.Context) {
@@ -90,7 +95,8 @@ func (c *Client) Run(ctx context.Context) {
 		}
 		wait := backoff
 		if errors.Is(err, errTailcatDial) {
-			// 409 之后不要从 1 秒开始猛连。30 秒探测一次，管理员清空连接串后出站还能回来。
+			// 409 之后不要从 1 秒开始猛连。入站还在时 30 秒探测一次。
+			// 入站会话全部结束后会提前叫醒这一轮，清空连接串就能马上恢复出站。
 			wait = maxReconnectBackoff
 			backoff = maxReconnectBackoff
 			slog.Warn("NexusDock Tailcat dial-in is active; outbound connect paused", "retry_in", wait)
@@ -105,8 +111,22 @@ func (c *Client) Run(ctx context.Context) {
 		case <-ctx.Done():
 			timer.Stop()
 			return
+		case <-c.wake:
+			// 入站已经没了。清空连接串后这次探测能马上把出站拉回来；连接串还在则会再拿到 409。
+			timer.Stop()
 		case <-timer.C:
 		}
+	}
+}
+
+// nudgeOutbound 在入站会话结束后叫醒出站探测。仍有活会话时不叫，避免和拨入重叠着猛连 Nexus。
+func (c *Client) nudgeOutbound() {
+	if c == nil || c.wake == nil || c.state.Connected() {
+		return
+	}
+	select {
+	case c.wake <- struct{}{}:
+	default:
 	}
 }
 
@@ -170,6 +190,7 @@ func (c *Client) serveInbound(ctx context.Context, w http.ResponseWriter, r *htt
 	if err := c.runSession(sessionCtx, socket); err != nil && ctx.Err() == nil {
 		slog.Warn("NexusDock inbound session ended", "error", secretredact.Text(err.Error()))
 	}
+	c.nudgeOutbound()
 }
 
 func (c *Client) connect(ctx context.Context) error {

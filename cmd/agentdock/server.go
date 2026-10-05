@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"strings"
 	"sync"
@@ -132,27 +131,20 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 		cancelServices()
 		bridgeWG.Wait()
 	}()
-	var nodeClient *nexusbridge.Client
-	if identityErr == nil {
-		artifactStore := publicartifacts.New(cfg.AgentDockHome, cfg.OAuthServerURL, cfg.Port)
-		nodeClient = nexusbridge.NewClient(identity, server, runtime, artifactStore, nexusStatus)
-		bridgeWG.Add(1)
-		go func() {
-			defer bridgeWG.Done()
-			nodeClient.Run(serviceCtx)
-		}()
-	}
+	// 配对文件可以在启动之后才写上。Host 会自己开始出站；Tailcat 监听在那之前返回 503。
+	artifactStore := publicartifacts.New(cfg.AgentDockHome, cfg.OAuthServerURL, cfg.Port)
+	bridgeHost := nexusbridge.NewHost(cfg.AgentDockHome, server, runtime, artifactStore, nexusStatus)
+	bridgeWG.Add(1)
+	go func() {
+		defer bridgeWG.Done()
+		bridgeHost.Run(serviceCtx)
+	}()
 	runtimeRoot := strings.TrimSpace(os.Getenv("AGENTDOCK_RUNTIME_ROOT"))
 	if runtimeRoot != "" {
 		bridgeWG.Add(1)
 		go func() {
 			defer bridgeWG.Done()
-			tailcatnode.Run(serviceCtx, runtimeRoot, func(listenerCtx context.Context, ln net.Listener) error {
-				if nodeClient == nil {
-					return tailcatnode.ServeUnpaired(listenerCtx, ln)
-				}
-				return nodeClient.Serve(listenerCtx, ln)
-			})
+			tailcatnode.Run(serviceCtx, runtimeRoot, bridgeHost.Serve)
 		}()
 	}
 	if runtimeRoot == "" {

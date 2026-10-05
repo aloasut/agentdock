@@ -4,6 +4,7 @@ kind: architecture
 code:
   paths:
     - internal/nexusbridge/client.go
+    - internal/nexusbridge/host.go
     - internal/nexusbridge/identity.go
     - internal/nexusclient/client.go
     - cmd/agentdock/command_nexus.go
@@ -19,6 +20,7 @@ code:
 > **Nexus 地址与 Device Token 只来自配对身份文件**；拒绝环境变量/控制面板等第二来源
 > （启动时还会主动清除旧 env，见 execution-model）；旧 DPAPI Token 不再读取并立即清除。
 > `Status` 输出刻意不含 token 本身。
+> 节点 WebSocket 会在身份文件出现或变化后续上，不必为了拨入重启进程。Recall 等按启动配置注册的工具仍要重启后才出现。
 
 ## 协议边界
 
@@ -31,9 +33,10 @@ code:
 ## 生命周期与关闭次序
 
 - 重连退避 1s→30s 指数 + 随机抖动；`ConnectionState` 供 `service.status`/控制面板展示。
-  出站仍是默认通道。服务模式 `tailcat` 时，同一 Client 还在 Tailcat 拨入的 TCP 上接受节点
-  WebSocket；409、连接串和会话重叠见 nexus/tailcat-dial-in。收到 `TAILCAT_NODE_DIAL` 后退避停在
-  30 秒探测，不再退回 1 秒。连接状态按活会话计数，这次 409 不会把仍在的入站标成断开。
+  出站仍是默认通道。服务模式 `tailcat` 时，Tailcat 监听在已配对时接受节点 WebSocket；
+  409、连接串和会话重叠见 nexus/tailcat-dial-in。收到 `TAILCAT_NODE_DIAL` 后退避停在
+  30 秒探测，不再退回 1 秒。入站会话全部结束后立刻再探测一次。连接状态按活会话计数，
+  这次 409 不会把仍在的入站标成断开。还有活会话时不提前探测。
 - Invoke 需 drain（5s）再退出。
 - **Bridge 必须先停接收并 drain，再允许外层关闭 Runtime**（`bridgeWG.Wait()` 先于
   `Runtime.Close`，见 execution-model 的启动/关闭编排）。

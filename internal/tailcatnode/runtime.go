@@ -111,6 +111,8 @@ func runOnce(ctx context.Context, root string, serve ServeFunc) (err error) {
 		<-ctx.Done()
 		return ctx.Err()
 	}
+	// 监听已经建立之后不周期换 Server。公开状态没有独立的 DERP 连接位，
+	// 靠猜测中继卡住而重建会拆掉还活着的会话。对端进程重启由 Nexus 的短拨发现。
 	err = serve(ctx, listener)
 	if err == nil {
 		err = ctx.Err()

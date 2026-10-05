@@ -22,7 +22,7 @@ NexusDock 节点上**（AgentDock 只是客户端；传输与凭据见 nexus-bri
 整体不可用**。
 
 门控：五个工具全部 `Availability: requiresNexus`——`cfg.NexusEndpoint != ""` 才注册
-（配对后经 `agentdock nexus pair` 写入身份文件 + 重启）。未配对时 `agentdock_context` 把
+（配对后经 `agentdock nexus pair` 写入身份文件；节点 WebSocket 会在文件出现后续上，这五个工具仍要重启进程才注册）。未配对时 `agentdock_context` 把
 Recall 列为不可用，是预期行为不是故障。
 
 ## 工具契约（查表）

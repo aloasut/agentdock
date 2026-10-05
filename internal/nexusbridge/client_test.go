@@ -424,6 +424,67 @@ func TestTailcatInboundHelloAndOutboundConflict(t *testing.T) {
 	}
 }
 
+func TestInboundEndWakesOutboundProbe(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hits atomic.Int32
+	nexus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error_code":"TAILCAT_NODE_DIAL","error":"dial in"}`))
+	}))
+	defer nexus.Close()
+
+	state := &ConnectionState{}
+	client := NewClient(
+		Identity{Endpoint: nexus.URL, NodeID: "node-test", DeviceID: "device-test", DeviceToken: "test-device-token"},
+		inboundNode{}, nil, publicartifacts.Store{}, state,
+	)
+	serveCtx, serveCancel := context.WithCancel(context.Background())
+	defer serveCancel()
+	go func() { _ = client.Serve(serveCtx, ln) }()
+
+	socket := dialInbound(t, ln.Addr().String())
+	var hello protocol.Message
+	if err := socket.ReadJSON(&hello); err != nil {
+		t.Fatal(err)
+	}
+	if err := socket.WriteJSON(protocol.Message{
+		Type: protocol.MessageNodeReady, ProtocolVersion: protocol.ConnectionProtocolVersion, HeartbeatMS: 30000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !state.Connected() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !state.Connected() {
+		t.Fatal("inbound session was not marked connected")
+	}
+
+	outCtx, outCancel := context.WithCancel(context.Background())
+	defer outCancel()
+	go client.Run(outCtx)
+	deadline = time.Now().Add(2 * time.Second)
+	for hits.Load() < 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if hits.Load() < 1 {
+		t.Fatal("outbound probe did not start")
+	}
+	_ = socket.Close()
+	deadline = time.Now().Add(2 * time.Second)
+	for hits.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if hits.Load() < 2 {
+		t.Fatalf("outbound probes after inbound end = %d, want at least 2", hits.Load())
+	}
+}
+
 func TestInboundProtocolErrorClosesSocket(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
