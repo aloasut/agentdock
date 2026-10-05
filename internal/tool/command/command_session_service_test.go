@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -190,13 +192,22 @@ func TestExecCommandCancelledForegroundWaitIsUnsuccessful(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
 	}()
+	marker := filepath.Join(t.TempDir(), "leaked")
 	result, err := service.execArgs(ctx, map[string]any{
-		"cmd":            "sleep 1",
+		"cmd":            "sleep 1; printf leaked > \"$MARKER\"",
+		"env":            map[string]any{"MARKER": marker},
 		"execution_mode": "sync",
 		"timeout_ms":     5000,
 	})
 	if err != nil {
 		t.Fatalf("execCommand() error = %v", err)
+	}
+	if result["session_reason"] != "request_cancelled" {
+		t.Fatalf("session_reason = %#v, want request_cancelled", result["session_reason"])
+	}
+	time.Sleep(1200 * time.Millisecond)
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("cancelled foreground command still wrote the marker")
 	}
 	stages := observability.CloseExecution(ctx)
 	if len(stages) != 2 || stages[1].Name != observability.StageCommandForegroundWait || stages[1].Success {
@@ -207,6 +218,33 @@ func TestExecCommandCancelledForegroundWaitIsUnsuccessful(t *testing.T) {
 		if _, err := service.killSessionArgs(map[string]any{"session_id": sessionID}); err != nil {
 			t.Fatalf("killSession() error = %v", err)
 		}
+	}
+}
+
+func TestExecCommandAsyncSurvivesCallerCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test command uses POSIX sleep")
+	}
+	service, _ := newCommandTestService(t)
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	marker := filepath.Join(t.TempDir(), "kept")
+	result, err := service.execArgs(base, map[string]any{
+		"cmd":            "sleep 0.3; printf kept > \"$MARKER\"",
+		"env":            map[string]any{"MARKER": marker},
+		"execution_mode": "async",
+		"timeout_ms":     5000,
+	})
+	if err != nil {
+		t.Fatalf("execCommand() error = %v", err)
+	}
+	cancel()
+	time.Sleep(800 * time.Millisecond)
+	if _, statErr := os.Stat(marker); statErr != nil {
+		t.Fatalf("async command stopped after the caller context ended: %v", statErr)
+	}
+	if sessionID, _ := result["session_id"].(string); sessionID != "" {
+		_, _ = service.killSessionArgs(map[string]any{"session_id": sessionID})
 	}
 }
 

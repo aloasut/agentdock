@@ -136,6 +136,13 @@ func (svc *Service) Exec(ctx context.Context, request ExecRequest) (Result, erro
 		result["observe_after_ms"] = 1000
 		return result
 	}
+	// 只停掉还在前台等待的进程树。异步返回和已经交出 session 的长任务不经过这里，
+	// 子进程继续只受 timeout_ms 和 session_act 控制，避免请求结束时杀掉 git push 这类后台命令。
+	cancelForeground := func(waitStartedAt time.Time) Result {
+		observability.RecordStage(ctx, observability.StageCommandForegroundWait, waitStartedAt, false)
+		_, _ = s.Kill()
+		return storeSession("request_cancelled")
+	}
 
 	switch executionMode {
 	case commandExecutionModeAsync:
@@ -146,8 +153,7 @@ func (svc *Service) Exec(ctx context.Context, request ExecRequest) (Result, erro
 		case <-s.Done:
 			observability.RecordStage(ctx, observability.StageCommandForegroundWait, waitStartedAt, true)
 		case <-ctx.Done():
-			observability.RecordStage(ctx, observability.StageCommandForegroundWait, waitStartedAt, false)
-			return storeSession("request_cancelled"), nil
+			return cancelForeground(waitStartedAt), nil
 		}
 	case commandExecutionModeAuto:
 		timer := time.NewTimer(yield)
@@ -160,8 +166,7 @@ func (svc *Service) Exec(ctx context.Context, request ExecRequest) (Result, erro
 			observability.RecordStage(ctx, observability.StageCommandForegroundWait, waitStartedAt, true)
 			return storeSession("foreground_threshold_exceeded"), nil
 		case <-ctx.Done():
-			observability.RecordStage(ctx, observability.StageCommandForegroundWait, waitStartedAt, false)
-			return storeSession("request_cancelled"), nil
+			return cancelForeground(waitStartedAt), nil
 		}
 	}
 
