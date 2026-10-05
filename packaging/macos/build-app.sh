@@ -348,8 +348,6 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>$VERSION</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_VERSION</string>
-  <key>LSUIElement</key>
-  <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSAppleEventsUsageDescription</key>

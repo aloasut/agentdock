@@ -30,6 +30,7 @@ MainActor.assumeIsolated {
     ApplicationMenu.install()
     let delegate = AppDelegate()
     application.delegate = delegate
-    application.setActivationPolicy(.accessory)
+    // 打开窗口时留在 Dock。关掉窗口后会改成菜单栏驻留，避免一开始就没有图标。
+    application.setActivationPolicy(.regular)
     application.run()
 }

@@ -81,17 +81,24 @@ enum AgentDockLogoArtwork {
     }
 
     /// 菜单栏使用 Template Image；macOS 会根据菜单栏外观自动用黑/白着色。
+    /// 状态栏按钮经常不调用延迟绘制，空图像看起来就像没有图标，所以这里直接画进位图。
     static func menuBarImage() -> NSImage {
         let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size, flipped: true) { rect in
-            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+        let image = NSImage(size: size)
+        image.lockFocus()
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.saveGState()
+            context.translateBy(x: 0, y: size.height)
+            context.scaleBy(x: 1, y: -1)
             context.setFillColor(NSColor.black.cgColor)
+            let rect = CGRect(origin: .zero, size: size)
             for path in monochromePaths(in: rect.insetBy(dx: 0.75, dy: 0.75)) {
                 context.addPath(path)
                 context.fillPath()
             }
-            return true
+            context.restoreGState()
         }
+        image.unlockFocus()
         image.isTemplate = true
         image.accessibilityDescription = "AgentDock"
         return image

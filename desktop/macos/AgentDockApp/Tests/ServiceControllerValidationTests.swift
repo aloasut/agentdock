@@ -58,6 +58,7 @@ struct ServiceControllerValidationTests {
         }
 
         try testConfiguredTunnelMode(root: root, appBundle: appBundle)
+        try testLANListenLeavesOtherSettingsUntouched()
         try testLegacyRuntimeMigrationTransactions(root: root, appBundle: appBundle)
         testQuickTunnelBootstrap()
         testServiceRegistrationStatusClassification()
@@ -68,6 +69,31 @@ struct ServiceControllerValidationTests {
         try testStreamingUpdateProcess(root: root)
 
         print("service controller validation tests passed")
+    }
+
+    private static func testLANListenLeavesOtherSettingsUntouched() throws {
+        let original = """
+        AGENTDOCK_HOST=127.0.0.1
+        AGENTDOCK_PORT=8765
+        AGENTDOCK_AUTH_TOKEN=keep-me
+        AGENTDOCK_TUNNEL_MODE=tailcat
+
+        """
+        let environment = ManagedEnvironment(originalText: original, values: ManagedEnvironment.parseValues(original))
+        let enabled = try LANListenConfiguration.updatedData(environment, enabled: true)
+        let enabledText = String(decoding: enabled, as: UTF8.self)
+        let enabledValues = ManagedEnvironment.parseValues(enabledText)
+        precondition(enabledValues["AGENTDOCK_HOST"] == "lan")
+        precondition(enabledValues["AGENTDOCK_PORT"] == "8765")
+        precondition(enabledValues["AGENTDOCK_AUTH_TOKEN"] == "keep-me")
+        precondition(enabledValues["AGENTDOCK_TUNNEL_MODE"] == "tailcat")
+
+        let enabledEnvironment = ManagedEnvironment(originalText: enabledText, values: enabledValues)
+        let disabled = try LANListenConfiguration.updatedData(enabledEnvironment, enabled: false)
+        let disabledValues = ManagedEnvironment.parseValues(String(decoding: disabled, as: UTF8.self))
+        precondition(disabledValues["AGENTDOCK_HOST"] == "127.0.0.1")
+        precondition(disabledValues["AGENTDOCK_TUNNEL_MODE"] == "tailcat")
+        precondition(disabledValues["AGENTDOCK_AUTH_TOKEN"] == "keep-me")
     }
 
     private static func testConfiguredTunnelMode(root: URL, appBundle: URL) throws {

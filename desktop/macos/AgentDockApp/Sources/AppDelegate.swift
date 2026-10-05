@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Foundation
 
 @MainActor
@@ -80,12 +81,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DesktopUpdateServiceState.remove(at: service.paths.updateServiceState)
             DesktopUpdateHandoff.remove(at: service.paths.updateHandoff)
             refreshStatus(showWindow: !launchedInBackground)
+            if launchedInBackground {
+                hideToMenuBar()
+            }
             Task {
                 do {
                     try service.reconcileTunnelRegistrationFromConfiguration()
                 } catch {
                     NSLog("AgentDock 启动时 Tunnel 状态收敛失败：%@", error.localizedDescription)
                 }
+                await service.ensureCoreProcess()
                 self.refreshStatus()
             }
         }
@@ -98,6 +103,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        // 完全退出才停掉界面拉起的核心。关窗口只收到菜单栏，核心继续在后台跑。
+        service.stopAppOwnedCore()
+    }
+
+    func hideToMenuBar() {
+        // 关窗后只留菜单栏。setActivationPolicy(.accessory) 在当前系统上经常去不掉 Dock 图标，
+        // 必须再做一次 UIElement 变换。图标要在变换前就挂上；变换之后新建的会被控制中心当成临时项，
+        // 菜单栏排满时临时项不会画出来。安装目录不影响这件事。
+        installMenuBarItem()
+        var psn = ProcessSerialNumber(highLongOfPSN: 0, lowLongOfPSN: UInt32(kCurrentProcess))
+        _ = TransformProcessType(&psn, ProcessApplicationTransformState(kProcessTransformToUIElementApplication))
+        _ = NSApp.setActivationPolicy(.accessory)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.statusItem?.button == nil {
+                self.installMenuBarItem()
+            }
+        }
+    }
+
+    func showInDock() {
+        var psn = ProcessSerialNumber(highLongOfPSN: 0, lowLongOfPSN: UInt32(kCurrentProcess))
+        _ = TransformProcessType(&psn, ProcessApplicationTransformState(kProcessTransformToForegroundApplication))
+        _ = NSApp.setActivationPolicy(.regular)
+        NSApp.unhide(nil)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.statusItem?.button == nil else { return }
+            self.installMenuBarItem()
+        }
     }
 
     private func setUpdateInProgress(_ inProgress: Bool, checking: Bool = false) {
@@ -407,24 +441,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func setStatusItemVisible(_ visible: Bool) {
-        if visible {
-            guard statusItem == nil else { return }
-            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            // NSStatusItem.visible 会按 autosaveName 持久化。更新阶段不能用 visible=false
-            // 做临时隐藏，否则 App 在替换期间退出时会把“临时隐藏”永久写进用户偏好。
-            item.autosaveName = "AgentDockMenuBarItem"
-            item.isVisible = true
-            if let button = item.button {
-                button.image = AgentDockLogoArtwork.menuBarImage()
-            }
-            statusItem = item
+    private func installMenuBarItem() {
+        guard UpdateStatusItemVisibility.shouldShow(
+            isUpdating: isUpdating,
+            isCheckingForUpdate: isCheckingForUpdate
+        ) else {
+            removeStatusItem()
             return
         }
+        ensureStatusItem()
+        rebuildMenu()
+    }
 
+    private func prepareMenuBarItemPosition() {
+        let defaults = UserDefaults.standard
+        let visibleKey = "NSStatusItem Visible AgentDockTray"
+        let positionKey = "NSStatusItem Preferred Position AgentDockTray"
+        if defaults.object(forKey: visibleKey) == nil {
+            defaults.set(true, forKey: visibleKey)
+        }
+        // 控制中心给新图标的默认位置落在刘海正下方，创建成功也看不见。
+        // 第一次放到屏幕右侧、时钟左边。之后以用户拖动或「菜单栏」设置里保存的位置为准。
+        guard defaults.object(forKey: positionKey) == nil else { return }
+        let width = NSScreen.screens.map(\.frame.maxX).max() ?? 1440
+        defaults.set(width - 380, forKey: positionKey)
+    }
+
+    private func ensureStatusItem() {
+        if statusItem == nil {
+            // 固定名字后控制中心才会记住位置。没有名字的图标是临时项，菜单栏排满时会被挤进刘海。
+            // 若用户在「菜单栏」设置里关掉 AgentDock，仍以系统设置为准。
+            prepareMenuBarItemPosition()
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            item.autosaveName = "AgentDockTray"
+            item.isVisible = true
+            statusItem = item
+        }
+        guard let button = statusItem?.button else { return }
+        button.image = AgentDockLogoArtwork.menuBarImage()
+        button.image?.isTemplate = true
+        button.imageScaling = .scaleProportionallyDown
+        button.imagePosition = .imageOnly
+        button.toolTip = "AgentDock"
+        statusItem?.isVisible = true
+    }
+
+    private func removeStatusItem() {
         guard let item = statusItem else { return }
         NSStatusBar.system.removeStatusItem(item)
         statusItem = nil
+    }
+
+    private func setStatusItemVisible(_ visible: Bool) {
+        if visible {
+            installMenuBarItem()
+            return
+        }
+        removeStatusItem()
     }
 
     private func refreshStatus(showWindow: Bool = false) {
@@ -440,6 +513,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // 关窗不退出。窗口自己会收到菜单栏，后台服务继续运行。
+        false
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -525,7 +603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.addItem(item(L10n.text("Open documentation"), #selector(openDocumentation)))
         menu.addItem(.separator())
-        menu.addItem(item(L10n.text("Exit menu bar app"), #selector(quit)))
+        menu.addItem(item(L10n.text("Quit completely"), #selector(quit)))
         statusItem?.menu = menu
     }
 

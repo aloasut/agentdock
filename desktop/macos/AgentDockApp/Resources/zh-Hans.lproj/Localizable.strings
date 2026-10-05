@@ -145,6 +145,18 @@
 "System permissions" = "系统权限";
 "Temporary address" = "临时地址";
 "Tailcat" = "Tailcat";
+"LAN MCP" = "局域网 MCP";
+"Start LAN MCP" = "启动局域网 MCP";
+"Stop LAN MCP" = "停止局域网 MCP";
+"On. Other devices on this network can use the addresses below. The Bearer token is still required." = "已开启。同一网络上的设备可以用下面的地址访问，仍然需要 Bearer 令牌。";
+"Off. Only this Mac can reach MCP." = "未开启。只有这台 Mac 能访问 MCP。";
+"Tailcat MCP" = "Tailcat MCP";
+"Start Tailcat MCP" = "启动 Tailcat MCP";
+"Stop Tailcat MCP" = "停止 Tailcat MCP";
+"On. Copy the connection string into the client. LAN MCP can stay on." = "已开启。把连接串交给客户端。局域网 MCP 可以继续开着。";
+"Off. One click starts a Tailcat server on the saved port, or port 80. LAN MCP can stay on." = "未开启。一键按已保存的端口启动；没有保存过时使用 80。局域网 MCP 可以同时开着。";
+"Copy connection string" = "复制连接串";
+"No private network address is available yet. Restart after this Mac joins a network." = "还没有可用的私网地址。这台 Mac 接入网络后重启服务。";
 "Run a Tailcat server on this computer. Copy the connection string and TCP port into the NexusDock node. NexusDock dials in. This does not publish a public MCP address." = "在这台电脑上运行 Tailcat 服务。把连接串和 TCP 端口填进 NexusDock 节点，由 NexusDock 拨入。这个模式不发布公网 MCP 地址。";
 "Reset connection string" = "重置连接串";
 "TCP port" = "TCP 端口";
@@ -225,6 +237,7 @@
 "Open logs folder" = "打开日志目录";
 "Open documentation" = "打开使用文档";
 "Exit menu bar app" = "退出菜单栏";
+"Quit completely" = "完全退出";
 "AgentDock update completed" = "AgentDock 更新完成";
 "Update failed" = "更新失败";
 "Updating AgentDock" = "正在更新 AgentDock";

@@ -221,8 +221,9 @@ final class InstallerRunner {
             values["AGENTDOCK_SERVER_URL"] = serverURL
             values["AGENTDOCK_OAUTH_ENABLED"] = "true"
         }
-        if request.mode != .lan, values["AGENTDOCK_HOST"]?.lowercased() == TunnelMode.lan.rawValue {
-            // 从 LAN 模式切回其他模式时必须撤销 lan 监听；其余自定义 host 保持不变。
+        if request.mode != .lan && request.mode != .tailcat,
+           values["AGENTDOCK_HOST"]?.lowercased() == TunnelMode.lan.rawValue {
+            // 局域网监听和 Tailcat 可以同时开。只有切回仅本机或 Cloudflare 时才收回 lan。
             values["AGENTDOCK_HOST"] = "127.0.0.1"
         }
 

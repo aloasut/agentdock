@@ -427,8 +427,9 @@ func macOSOpenArguments(appPath string) []string {
 }
 
 func terminateMacOSApp(ctx context.Context, appPath string, timeout time.Duration) error {
-	executable := filepath.Join(filepath.Clean(appPath), "Contents", "MacOS", "AgentDock")
-	pids, err := processIDsAtExecutable(ctx, executable)
+	// 控制面板退出不会自动带走界面直接拉起的 launch-core。更新前要把同一份 App 的核心一起停掉。
+	gui, helper := macOSAppExecutables(appPath)
+	pids, err := macOSAppProcessIDs(ctx, gui, helper)
 	if err != nil {
 		return err
 	}
@@ -439,16 +440,58 @@ func terminateMacOSApp(ctx context.Context, appPath string, timeout time.Duratio
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		remaining, err := processIDsAtExecutable(ctx, executable)
+		remaining, err := macOSAppProcessIDs(ctx, gui, helper)
 		if err != nil {
 			return err
 		}
 		if len(remaining) == 0 {
 			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 	return fmt.Errorf("AgentDock.app did not exit within %s", timeout)
+}
+
+func macOSAppExecutables(appPath string) (gui string, helper string) {
+	appPath = filepath.Clean(appPath)
+	return filepath.Join(appPath, "Contents", "MacOS", "AgentDock"),
+		filepath.Join(appPath, "Contents", "Helpers", "agentdock")
+}
+
+func macOSAppProcessIDs(ctx context.Context, gui string, helper string) ([]int, error) {
+	output, err := exec.CommandContext(ctx, "/bin/ps", "-axo", "pid=,command=").Output()
+	if err != nil {
+		return nil, err
+	}
+	return append(processIDsFromPSOutput(output, gui), ownedLaunchCorePIDsFromPSOutput(output, helper)...), nil
+}
+
+func ownedLaunchCorePIDsFromPSOutput(output []byte, helper string) []int {
+	cleanHelper := filepath.Clean(helper)
+	var pids []int
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		separator := strings.IndexByte(line, ' ')
+		if separator <= 0 {
+			continue
+		}
+		command := strings.TrimSpace(line[separator+1:])
+		if command != cleanHelper && !strings.HasPrefix(command, cleanHelper+" ") {
+			continue
+		}
+		if !strings.Contains(command, " service launch-core") {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(line[:separator]))
+		if err == nil && pid > 0 && pid != os.Getpid() {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
 
 func processIDsAtExecutable(ctx context.Context, executable string) ([]int, error) {

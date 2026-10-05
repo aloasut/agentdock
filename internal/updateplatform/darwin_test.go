@@ -24,6 +24,18 @@ func TestProcessIDsFromPSOutputPreservesExecutablePathsWithSpaces(t *testing.T) 
 	}
 }
 
+func TestOwnedLaunchCorePIDsFromPSOutputStopsOnlyThisAppCore(t *testing.T) {
+	helper := "/Applications/AgentDock.app/Contents/Helpers/agentdock"
+	output := []byte("" +
+		"  10 " + helper + " service launch-core --runtime-root /Users/me/Library/Application Support/AgentDock\n" +
+		"  11 " + helper + "-arbiter --root /tmp\n" +
+		"  12 /tmp/AgentDock.app/Contents/Helpers/agentdock service launch-core --runtime-root /tmp\n" +
+		"  13 " + helper + " update --progress-json\n")
+	if got := ownedLaunchCorePIDsFromPSOutput(output, helper); !slices.Equal(got, []int{10}) {
+		t.Fatalf("core pids = %v", got)
+	}
+}
+
 func TestMacOSOpenArgumentsPreserveRuntimeHomeOverrides(t *testing.T) {
 	t.Setenv("HOME", "/tmp/agentdock-home")
 	t.Setenv("CFFIXED_USER_HOME", "/tmp/agentdock-home")

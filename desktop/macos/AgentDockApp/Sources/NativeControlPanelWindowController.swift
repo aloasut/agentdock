@@ -33,8 +33,9 @@ final class NativeControlPanelWindowController: NSWindowController, NSWindowDele
         window.minSize = NSSize(width: 900, height: 620)
         window.center()
         super.init(window: window)
-        window.delegate = self
         window.contentViewController = NSHostingController(rootView: ControlPanelRootView(model: model))
+        // contentViewController 可能换掉 delegate。关窗要收到菜单栏，必须在它之后再设一次。
+        window.delegate = self
         NotificationCenter.default.addObserver(
             forName: .agentDockOpenPermissions,
             object: nil,
@@ -48,9 +49,20 @@ final class NativeControlPanelWindowController: NSWindowController, NSWindowDele
 
     func present(status: ServiceStatus) {
         model.update(status)
+        window?.delegate = self
+        (NSApp.delegate as? AppDelegate)?.showInDock()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === window else { return true }
+        // 红按钮只把界面收到菜单栏，不结束后台核心。完全退出在菜单栏里。
+        // 不能看 NSApp.windows：状态栏和 SwiftUI 的内部窗口也算可见，会把这次切换吃掉。
+        sender.orderOut(nil)
+        (NSApp.delegate as? AppDelegate)?.hideToMenuBar()
+        return false
     }
 
     func update(status: ServiceStatus) { model.update(status) }
@@ -177,6 +189,22 @@ final class ControlPanelModel: ObservableObject {
     func applyTailcat(portText: String, allowText: String) async {
         await perform {
             try await self.service.configureTailcat(portText: portText, allowText: allowText)
+        }
+    }
+
+    func setLANListen(enabled: Bool) async {
+        await perform {
+            try await self.configurationController.setLANListen(enabled: enabled)
+        }
+    }
+
+    func setTailcatServer(enabled: Bool) async {
+        await perform {
+            if enabled {
+                try await self.service.startTailcatServer()
+            } else {
+                try await self.service.stopTailcatServer()
+            }
         }
     }
 
@@ -577,6 +605,8 @@ private struct HomeView: View {
                         .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 )
 
+                LocalMCPAccessSection(model: model)
+
                 HStack(spacing: 0) {
                     Button {
                         model.page = .connections
@@ -834,6 +864,8 @@ private struct ConnectionsView: View {
                     title: L10n.text("Connections"),
                     detail: L10n.text("Connect AI clients to this device remotely.")
                 )
+
+                LocalMCPAccessSection(model: model)
 
                 SettingsSection(L10n.text("Remote connection")) {
                     SettingsRow(L10n.text("Status")) {

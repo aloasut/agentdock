@@ -275,7 +275,7 @@ func TestDesktopTrayMenusUseNativeDismissalAndOmitCopyActions(t *testing.T) {
 		`L10n.text("Open AgentDock")`, `L10n.text("Stop AgentDock")`, `L10n.text("Restart AgentDock")`,
 		`L10n.text("Start AgentDock")`, `L10n.text("Check for updates…")`, `L10n.text("View activity")`,
 		`L10n.text("Open logs folder")`, `L10n.text("Open configuration folder")`, `L10n.text("Open documentation")`,
-		`L10n.text("Exit menu bar app")`,
+		`L10n.text("Quit completely")`,
 	} {
 		if !strings.Contains(macApp, want) {
 			t.Fatalf("macOS tray menu missing localized item %q", want)

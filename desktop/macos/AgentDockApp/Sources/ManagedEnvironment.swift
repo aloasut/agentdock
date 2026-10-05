@@ -12,8 +12,14 @@ struct ManagedEnvironment {
         return ManagedEnvironment(originalText: text, values: parseValues(text))
     }
 
-    func dataByUpdating(_ replacements: [String: String], removing removals: Set<String> = []) throws -> Data {
-        let editable = Set(ServiceConfiguration.editableKeys)
+    func dataByUpdating(
+        _ replacements: [String: String],
+        removing removals: Set<String> = [],
+        allowedKeys extraAllowedKeys: Set<String> = []
+    ) throws -> Data {
+        // AGENTDOCK_HOST 不进通用可编辑名单。局域网按钮只能经 LANListenConfiguration
+        // 写成 lan 或 127.0.0.1，避免设置页顺手改掉监听地址。
+        let editable = Set(ServiceConfiguration.editableKeys).union(extraAllowedKeys)
         let requested = Set(replacements.keys)
         guard requested.isSubset(of: editable) else {
             let rejected = requested.subtracting(editable).sorted().joined(separator: ", ")
@@ -123,5 +129,16 @@ struct ManagedEnvironment {
             index += 1
         }
         return result
+    }
+}
+
+enum LANListenConfiguration {
+    /// 局域网 MCP 和 Tailcat 是两条通道。这里只改监听地址，不读也不写隧道模式。
+    static func updatedData(_ environment: ManagedEnvironment, enabled: Bool) throws -> Data {
+        let target = enabled ? "lan" : "127.0.0.1"
+        return try environment.dataByUpdating(
+            ["AGENTDOCK_HOST": target],
+            allowedKeys: ["AGENTDOCK_HOST"]
+        )
     }
 }

@@ -14,6 +14,19 @@ import (
 	"time"
 )
 
+func TestOwnedLaunchCorePIDsFromPSOutputStopsOnlyThisAppCore(t *testing.T) {
+	helper := "/Applications/AgentDock.app/Contents/Helpers/agentdock"
+	output := []byte("" +
+		"  10 " + helper + " service launch-core --runtime-root /Users/me/Library/Application Support/AgentDock\n" +
+		"  11 " + helper + "-arbiter --root /tmp\n" +
+		"  12 /tmp/AgentDock.app/Contents/Helpers/agentdock service launch-core --runtime-root /tmp\n" +
+		"  13 " + helper + " update --progress-json\n")
+	got := ownedLaunchCorePIDsFromPSOutput(output, helper)
+	if len(got) != 1 || got[0] != 10 {
+		t.Fatalf("core pids = %v", got)
+	}
+}
+
 func TestExtractDesktopUpdateArchiveValidatesSignedApp(t *testing.T) {
 	dir := t.TempDir()
 	sourceRoot := filepath.Join(dir, "source")

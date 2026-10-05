@@ -28,6 +28,7 @@ final class UpdateProgressWindowController: NSWindowController {
     }
 
     func present() {
+        (NSApp.delegate as? AppDelegate)?.showInDock()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

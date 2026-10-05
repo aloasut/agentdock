@@ -28,6 +28,7 @@ final class DesktopPermissionsWindowController: NSWindowController {
 
     func present() {
         refresh()
+        (NSApp.delegate as? AppDelegate)?.showInDock()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

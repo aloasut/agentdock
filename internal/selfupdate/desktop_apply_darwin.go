@@ -100,6 +100,11 @@ func (update *macOSDesktopUpdate) Install(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// 只根据控制面板是否打开决定更新后要不要再打开窗口。核心进程单独停掉，避免旧二进制继续占端口。
+	corePIDs, err := runningOwnedLaunchCorePIDs(ctx, update.targetPath)
+	if err != nil {
+		return err
+	}
 	update.appWasRunning = len(pids) > 0
 	var outputRedirect *processOutputRedirect
 	if update.appWasRunning {
@@ -108,7 +113,7 @@ func (update *macOSDesktopUpdate) Install(ctx context.Context) error {
 			return fmt.Errorf("准备独立更新日志失败: %w", err)
 		}
 	}
-	if err := terminatePIDs(ctx, pids); err != nil {
+	if err := terminatePIDs(ctx, append(pids, corePIDs...)); err != nil {
 		if outputRedirect != nil {
 			_ = outputRedirect.Restore()
 		}
@@ -140,6 +145,10 @@ func (update *macOSDesktopUpdate) Restore(ctx context.Context) error {
 	if update.installed {
 		pids, err := runningMacOSAppPIDs(ctx, update.targetPath)
 		if err == nil {
+			corePIDs, coreErr := runningOwnedLaunchCorePIDs(ctx, update.targetPath)
+			if coreErr == nil {
+				pids = append(pids, corePIDs...)
+			}
 			if terminateErr := terminatePIDs(ctx, pids); terminateErr != nil {
 				restoreErrors = append(restoreErrors, terminateErr.Error())
 			}
@@ -372,6 +381,40 @@ func (redirect *processOutputRedirect) Commit() {
 		_ = syscall.Close(redirect.stderr)
 		redirect.stderr = -1
 	}
+}
+
+func runningOwnedLaunchCorePIDs(ctx context.Context, appPath string) ([]int, error) {
+	helper := filepath.Join(filepath.Clean(appPath), "Contents", "Helpers", "agentdock")
+	output, err := exec.CommandContext(ctx, "/bin/ps", "-axo", "pid=,command=").Output()
+	if err != nil {
+		return nil, fmt.Errorf("读取 macOS 核心进程失败: %w", err)
+	}
+	return ownedLaunchCorePIDsFromPSOutput(output, helper), nil
+}
+
+func ownedLaunchCorePIDsFromPSOutput(output []byte, helper string) []int {
+	cleanHelper := filepath.Clean(helper)
+	var pids []int
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		separator := strings.IndexByte(line, ' ')
+		if separator <= 0 {
+			continue
+		}
+		command := strings.TrimSpace(line[separator+1:])
+		if command != cleanHelper && !strings.HasPrefix(command, cleanHelper+" ") {
+			continue
+		}
+		// 同一路径下还有 arbiter 等其它 Helper。只结束界面或 launchd 拉起的核心。
+		if !strings.Contains(command, " service launch-core") {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(line[:separator]))
+		if err == nil && pid > 0 && pid != os.Getpid() {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
 
 func runningMacOSAppPIDs(ctx context.Context, appPath string) ([]int, error) {

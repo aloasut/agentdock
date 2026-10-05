@@ -186,7 +186,10 @@ plutil -lint "$APP/Contents/Info.plist" >/dev/null
 test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "com.uvwt.agentdock"
 test "$(plutil -extract CFBundleIconFile raw -o - "$APP/Contents/Info.plist")" = "AgentDock.icns"
 test "$(plutil -extract CFBundleDevelopmentRegion raw -o - "$APP/Contents/Info.plist")" = "en"
-test "$(plutil -extract LSUIElement raw -o - "$APP/Contents/Info.plist")" = "true"
+if plutil -extract LSUIElement raw -o - "$APP/Contents/Info.plist" >/dev/null 2>&1; then
+  print -u2 -- "AgentDock.app must remain a Dock app; LSUIElement hides the icon and traps the user after the window closes"
+  exit 1
+fi
 test -n "$(plutil -extract NSAppleEventsUsageDescription raw -o - "$APP/Contents/Info.plist")"
 for localization in en zh-Hans; do
   lproj="$APP/Contents/Resources/$localization.lproj"

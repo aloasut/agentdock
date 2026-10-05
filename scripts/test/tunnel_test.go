@@ -84,6 +84,15 @@ func TestDesktopControlSurfacesKeepQuickTunnelAndTailcatSeparate(t *testing.T) {
 			`L10n.text("Regenerate temporary address")`,
 			`await model.applyTunnel(mode: .quick, serverURL: "", tunnelToken: "")`,
 			"TailcatAccessSection(model: model)",
+			"LocalMCPAccessSection(model: model)",
+			"setLANListen",
+			"setTailcatServer",
+		},
+		filepath.Join("..", "..", "desktop", "macos", "AgentDockApp", "Sources", "LocalMCPAccessSection.swift"): {
+			`L10n.text("Start LAN MCP")`,
+			`L10n.text("Start Tailcat MCP")`,
+			"setLANListen",
+			"setTailcatServer",
 		},
 		filepath.Join("..", "..", "desktop", "macos", "AgentDockApp", "Sources", "TailcatAccessSection.swift"): {
 			`L10n.text("Tailcat")`,

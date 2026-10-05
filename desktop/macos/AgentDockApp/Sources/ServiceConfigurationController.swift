@@ -158,6 +158,45 @@ final class ServiceConfigurationController {
         self.service = service
     }
 
+    func setLANListen(enabled: Bool) async throws {
+        let environmentURL = service.paths.environment
+        let originalData = try readPrivateRegularFile(environmentURL)
+        let environment = try ManagedEnvironment.load(from: environmentURL)
+        let current = environment.values["AGENTDOCK_HOST"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? "127.0.0.1"
+        let target = enabled ? "lan" : "127.0.0.1"
+        if current == target { return }
+        // 关闭只收回 lan。用户自己写过的其它地址不能被这个按钮改掉。
+        if !enabled && current != "lan" { return }
+        let updatedData = try LANListenConfiguration.updatedData(environment, enabled: enabled)
+        let wasLoaded = service.isLoaded()
+        try await service.runInBackground {
+            try self.writePrivateAtomically(updatedData, to: environmentURL)
+        }
+        guard wasLoaded else { return }
+        do {
+            try await service.restart()
+        } catch {
+            let originalError = error
+            do {
+                try await service.runInBackground {
+                    try self.writePrivateAtomically(originalData, to: environmentURL)
+                }
+                try await service.restart()
+            } catch {
+                throw ValidationError(L10n.format(
+                    "Failed to start the new configuration, and validation after restoring the old configuration also failed: %@",
+                    error.localizedDescription
+                ))
+            }
+            throw ValidationError(L10n.format(
+                "Failed to start the new configuration; restored the previous configuration: %@",
+                originalError.localizedDescription
+            ))
+        }
+    }
+
     func apply(_ requested: EditableServiceSettings) async throws {
         let settings = try requested.validated()
         let environmentURL = service.paths.environment

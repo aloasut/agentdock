@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import ServiceManagement
 
@@ -314,28 +315,23 @@ final class ServiceController: @unchecked Sendable {
         let requiresApproval = registration == .requiresApproval
         let enabled = registration == .enabled
         let registered = enabled || requiresApproval
-        let loaded = enabled && isLoaded(label: Self.coreLabel)
+        // launchctl 里有记录只说明登记还在。替换 App 后进程会被启动约束杀掉，这时没有 pid。
+        let launchdRunning = enabled && isLoaded(label: Self.coreLabel) && launchdProcessID(label: Self.coreLabel) != nil
+        let health: HealthPayload?
+        if let healthURL = configuration?.healthURL {
+            health = await fetchHealth(url: healthURL)
+        } else {
+            health = nil
+        }
+        let up = health?.ok == true
+        // 直接拉起的核心不在 launchd 里，但健康检查已经通过，界面应显示运行中。
+        let loaded = launchdRunning || up
         let nexusConnected = loaded && nexusDevice.paired ? await fetchNexusConnected() : false
 
-        guard loaded, let healthURL = configuration?.healthURL else {
-            return ServiceStatus(
-                installed: true,
-                loaded: loaded,
-                healthy: false,
-                version: nil,
-                configuration: configuration,
-                autostartEnabled: registered,
-                requiresApproval: requiresApproval,
-                migrationRequired: migrationRequired,
-                nexusConnection: .resolve(device: nexusDevice, connected: nexusConnected)
-            )
-        }
-
-        let health = await fetchHealth(url: healthURL)
         return ServiceStatus(
             installed: true,
-            loaded: true,
-            healthy: health?.ok == true,
+            loaded: loaded,
+            healthy: up,
             version: health?.version,
             configuration: configuration,
             autostartEnabled: registered,
@@ -381,15 +377,50 @@ final class ServiceController: @unchecked Sendable {
     }
 
     func start() async throws {
-        try registerCoreIfNeeded()
-        guard let configuration = ServiceConfiguration.load(from: paths.environment),
-              await waitForHealth(configuration: configuration) else {
-            throw ValidationError(L10n.text("AgentDock background service is enabled, but the health check did not pass."))
+        try prepareCoreServiceRegistration()
+        try await requireCoreHealthy()
+    }
+
+    func ensureCoreProcess() async {
+        // 更新会换成新的 Helper。旧进程的路径还是原来的，但文件已经不是这一份，必须先停掉。
+        stopStaleOwnedCores()
+        if let configuration = ServiceConfiguration.load(from: paths.environment),
+           await waitForHealth(configuration: configuration, timeout: 2) {
+            return
+        }
+        if coreService.status == .enabled,
+           launchdProcessID(label: Self.coreLabel) == nil,
+           consumeLaunchdRepairAttempt() {
+            do {
+                try prepareCoreServiceRegistration()
+            } catch {
+                NSLog("AgentDock Core 重新登记失败：%@", error.localizedDescription)
+            }
+            if let configuration = ServiceConfiguration.load(from: paths.environment),
+               await waitForHealth(configuration: configuration, timeout: 12) {
+                return
+            }
+        }
+        if launchdProcessID(label: Self.coreLabel) != nil { return }
+        do {
+            // 启动约束会让 launchd 把核心杀掉并记成 EX_CONFIG。界面再直接拉起同一条服务入口。
+            try spawnFallbackCore()
+            if let configuration = ServiceConfiguration.load(from: paths.environment) {
+                _ = await waitForHealth(configuration: configuration, timeout: 20)
+            }
+        } catch {
+            NSLog("AgentDock Core 直接启动失败：%@", error.localizedDescription)
         }
     }
 
     func stop() async throws {
+        stopFallbackCore()
         try unregister(service: coreService, label: Self.coreLabel)
+    }
+
+    /// 只停止界面自己拉起的核心。launchd 托管的服务仍由「停用」注销。
+    func stopAppOwnedCore() {
+        stopFallbackCore()
     }
 
     func unregisterManagedBackgroundServicesForUninstall() throws {
@@ -410,11 +441,10 @@ final class ServiceController: @unchecked Sendable {
     }
 
     func restart() async throws {
+        // 直接拉起的核心不在 launchd 里。改配置或重启时先停掉，避免旧进程继续占着端口。
+        stopFallbackCore()
         try reregister(service: coreService, label: Self.coreLabel, displayName: "AgentDock Core")
-        guard let configuration = ServiceConfiguration.load(from: paths.environment),
-              await waitForHealth(configuration: configuration) else {
-            throw ValidationError(L10n.text("AgentDock Core was re-registered, but the health check did not pass."))
-        }
+        try await requireCoreHealthy()
     }
 
     func nexusDeviceStatus() -> NexusDeviceStatus {
@@ -700,6 +730,19 @@ final class ServiceController: @unchecked Sendable {
         }
     }
 
+    func startTailcatServer() async throws {
+        let state = TailcatPanel.load(paths: paths)
+        // 一键沿用已保存的端口和允许名单；没配过就是 80 和空名单。
+        // tunnel configure 不改 AGENTDOCK_HOST，局域网 MCP 可以继续听着。
+        try await configureTailcat(portText: String(state.port), allowText: state.allowText)
+    }
+
+    func stopTailcatServer() async throws {
+        guard try configuredTunnelMode() == .tailcat else { return }
+        // none 只结束 Tailcat 服务模式。核心配置保留当前 AGENTDOCK_HOST。
+        try await configureTunnel(mode: .local, serverURL: "", tunnelToken: "")
+    }
+
     func configureTailcat(portText: String, allowText: String) async throws {
         let validated = try TailcatPanel.validate(portText: portText, allowText: allowText)
         let result = try await runInBackground {
@@ -956,6 +999,203 @@ final class ServiceController: @unchecked Sendable {
 
     private var tunnelService: SMAppService {
         SMAppService.agent(plistName: Self.tunnelPlistName)
+    }
+
+    private var fallbackCorePIDFile: URL {
+        paths.appSupport.appendingPathComponent("fallback-core.pid")
+    }
+
+    private var launchdRepairMarker: URL {
+        paths.appSupport.appendingPathComponent("launchd-core-repair")
+    }
+
+    /// 同一个已替换的签名只重新登记一次，避免每次打开界面都卸掉后台服务。
+    private func consumeLaunchdRepairAttempt() -> Bool {
+        let modified = (try? paths.binary.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)?
+            .timeIntervalSince1970.description ?? "unknown"
+        let stamp = paths.binary.path + ":" + modified
+        let previous = (try? String(contentsOf: launchdRepairMarker, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if previous == stamp { return false }
+        try? Data((stamp + "\n").utf8).write(to: launchdRepairMarker, options: .atomic)
+        return true
+    }
+
+    private func spawnFallbackCore() throws {
+        if fallbackCorePID() != nil { return }
+        let process = Process()
+        process.executableURL = paths.binary
+        process.arguments = [
+            "service", "launch-core",
+            "--runtime-root", paths.appSupport.path,
+        ]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        // 不保留 Process，避免界面对象释放时误伤核心。真正退出走 stopAppOwnedCore。
+        let pid = process.processIdentifier
+        try Data("\(pid)\n".utf8).write(to: fallbackCorePIDFile, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fallbackCorePIDFile.path)
+    }
+
+    private func stopFallbackCore() {
+        guard let pid = fallbackCorePID() else {
+            try? FileManager.default.removeItem(at: fallbackCorePIDFile)
+            return
+        }
+        terminateOwnedCore(pid)
+        try? FileManager.default.removeItem(at: fallbackCorePIDFile)
+    }
+
+    /// 界面直接拉起的核心不随 App 文件一起换掉。inode 对不上当前 Helper 时先结束它。
+    private func stopStaleOwnedCores() {
+        guard let current = currentHelperIdentity() else { return }
+        let launchdPID = launchdProcessID(label: Self.coreLabel)
+        var stopped = false
+        for pid in ownedLaunchCorePIDs() {
+            if let launchdPID, Int(pid) == launchdPID { continue }
+            guard let running = executableIdentity(pid: pid), running != current else { continue }
+            terminateOwnedCore(pid)
+            stopped = true
+        }
+        if stopped {
+            try? FileManager.default.removeItem(at: fallbackCorePIDFile)
+        }
+    }
+
+    private func terminateOwnedCore(_ pid: pid_t) {
+        guard isFallbackCoreCommand(pid) else { return }
+        kill(pid, SIGTERM)
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if kill(pid, 0) != 0 { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        if kill(pid, 0) == 0, isFallbackCoreCommand(pid) {
+            kill(pid, SIGKILL)
+        }
+    }
+
+    private struct ExecutableIdentity: Equatable {
+        let device: UInt32
+        let inode: UInt64
+    }
+
+    private func currentHelperIdentity() -> ExecutableIdentity? {
+        var info = stat()
+        guard stat(paths.binary.path, &info) == 0 else { return nil }
+        return ExecutableIdentity(device: UInt32(info.st_dev), inode: info.st_ino)
+    }
+
+    /// 读进程映射的文件，而不是路径上现在的文件。替换 App 后路径不变，inode 会变。
+    private func executableIdentity(pid: pid_t) -> ExecutableIdentity? {
+        var address: UInt64 = 0
+        for _ in 0..<64 {
+            var info = proc_regionwithpathinfo()
+            let size = withUnsafeMutablePointer(to: &info) { pointer in
+                proc_pidinfo(
+                    pid,
+                    PROC_PIDREGIONPATHINFO,
+                    address,
+                    pointer,
+                    Int32(MemoryLayout<proc_regionwithpathinfo>.stride)
+                )
+            }
+            if size <= 0 { return nil }
+            let identity = info.prp_vip.vip_vi.vi_stat
+            if identity.vst_ino != 0 {
+                return ExecutableIdentity(device: identity.vst_dev, inode: identity.vst_ino)
+            }
+            let next = info.prp_prinfo.pri_address &+ info.prp_prinfo.pri_size
+            if next <= address { return nil }
+            address = next
+        }
+        return nil
+    }
+
+    private func ownedLaunchCorePIDs() -> [pid_t] {
+        guard let result = try? runProcess(
+            executable: "/bin/ps",
+            arguments: ["-ax", "-o", "pid=,command="]
+        ), result.status == 0 else {
+            return []
+        }
+        let helper = paths.binary.path
+        let runtime = "--runtime-root " + paths.appSupport.path
+        var pids: [pid_t] = []
+        for rawLine in result.output.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard let separator = line.firstIndex(of: " "),
+                  let pid = pid_t(line[..<separator].trimmingCharacters(in: .whitespaces)),
+                  pid > 0 else {
+                continue
+            }
+            let command = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+            guard command == helper || command.hasPrefix(helper + " "),
+                  command.contains(" service launch-core"),
+                  command.contains(runtime) else {
+                continue
+            }
+            pids.append(pid)
+        }
+        return pids
+    }
+
+    private func fallbackCorePID() -> pid_t? {
+        guard let text = try? String(contentsOf: fallbackCorePIDFile, encoding: .utf8),
+              let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              pid > 0,
+              kill(pid, 0) == 0,
+              isFallbackCoreCommand(pid) else {
+            return nil
+        }
+        // launchd 成功拉起的是同一条命令。只认界面写下来的 pid，并且不要把它和 launchd 的 pid 搞混。
+        if let launchdPID = launchdProcessID(label: Self.coreLabel), launchdPID == Int(pid) {
+            return nil
+        }
+        return pid
+    }
+
+    private func isFallbackCoreCommand(_ pid: pid_t) -> Bool {
+        guard let result = try? runProcess(
+            executable: "/bin/ps",
+            arguments: ["-p", String(pid), "-o", "command="]
+        ), result.status == 0 else {
+            return false
+        }
+        let command = result.output
+        return command.contains("agentdock") && command.contains("launch-core")
+    }
+
+    /// launchd 因启动约束没有进程时，改由界面直接拉起同一条 launch-core 入口。
+    private func requireCoreHealthy() async throws {
+        guard let configuration = ServiceConfiguration.load(from: paths.environment) else {
+            throw ValidationError(L10n.text("AgentDock background service is enabled, but the health check did not pass."))
+        }
+        // 约束失败几秒内就没有 pid。已经有 pid 时留给真正的启动时间，避免再拉起第二个进程。
+        let initialTimeout: TimeInterval = launchdProcessID(label: Self.coreLabel) == nil ? 6 : 30
+        if await waitForHealth(configuration: configuration, timeout: initialTimeout) {
+            return
+        }
+        if launchdProcessID(label: Self.coreLabel) != nil {
+            throw ValidationError(L10n.text("AgentDock background service is enabled, but the health check did not pass."))
+        }
+        try spawnFallbackCore()
+        guard await waitForHealth(configuration: configuration, timeout: 20) else {
+            throw ValidationError(L10n.text("AgentDock background service is enabled, but the health check did not pass."))
+        }
+    }
+
+    private func prepareCoreServiceRegistration() throws {
+        // 替换 App 后 SMAppService 仍是 enabled，但旧启动约束对不上新签名。
+        // launchd 直接杀掉进程并记成 EX_CONFIG。register() 见 enabled 会什么都不做，所以要先卸再装。
+        if coreService.status == .enabled,
+           isLoaded(label: Self.coreLabel),
+           launchdProcessID(label: Self.coreLabel) == nil {
+            try reregister(service: coreService, label: Self.coreLabel, displayName: "AgentDock Core")
+            return
+        }
+        try registerCoreIfNeeded()
     }
 
     private func registerCoreIfNeeded() throws {

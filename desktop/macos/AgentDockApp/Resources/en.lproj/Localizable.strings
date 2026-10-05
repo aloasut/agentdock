@@ -145,6 +145,18 @@
 "System permissions" = "System permissions";
 "Temporary address" = "Temporary address";
 "Tailcat" = "Tailcat";
+"LAN MCP" = "LAN MCP";
+"Start LAN MCP" = "Start LAN MCP";
+"Stop LAN MCP" = "Stop LAN MCP";
+"On. Other devices on this network can use the addresses below. The Bearer token is still required." = "On. Other devices on this network can use the addresses below. The Bearer token is still required.";
+"Off. Only this Mac can reach MCP." = "Off. Only this Mac can reach MCP.";
+"Tailcat MCP" = "Tailcat MCP";
+"Start Tailcat MCP" = "Start Tailcat MCP";
+"Stop Tailcat MCP" = "Stop Tailcat MCP";
+"On. Copy the connection string into the client. LAN MCP can stay on." = "On. Copy the connection string into the client. LAN MCP can stay on.";
+"Off. One click starts a Tailcat server on the saved port, or port 80. LAN MCP can stay on." = "Off. One click starts a Tailcat server on the saved port, or port 80. LAN MCP can stay on.";
+"Copy connection string" = "Copy connection string";
+"No private network address is available yet. Restart after this Mac joins a network." = "No private network address is available yet. Restart after this Mac joins a network.";
 "Run a Tailcat server on this computer. Copy the connection string and TCP port into the NexusDock node. NexusDock dials in. This does not publish a public MCP address." = "Run a Tailcat server on this computer. Copy the connection string and TCP port into the NexusDock node. NexusDock dials in. This does not publish a public MCP address.";
 "Reset connection string" = "Reset connection string";
 "TCP port" = "TCP port";
@@ -225,6 +237,7 @@
 "Open logs folder" = "Open logs folder";
 "Open documentation" = "Open documentation";
 "Exit menu bar app" = "Exit menu bar app";
+"Quit completely" = "Quit completely";
 "AgentDock update completed" = "AgentDock update completed";
 "Update failed" = "Update failed";
 "Updating AgentDock" = "Updating AgentDock";
