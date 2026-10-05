@@ -97,6 +97,7 @@ func prepareMCPRequestBody(w http.ResponseWriter, r *http.Request) bool {
 		})
 		return false
 	}
+	body = repairCancelNotification(body, r.Header.Get(mcpProtocolVersionHeader))
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 	return true
@@ -111,16 +112,22 @@ func requestPublicBaseURL(cfg config.Config, r *http.Request) string {
 		return ""
 	}
 	scheme := "http"
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
-		parts := strings.Split(forwarded, ",")
-		candidate := strings.ToLower(strings.TrimSpace(parts[0]))
-		if candidate == "http" || candidate == "https" {
-			scheme = candidate
-		}
-	} else if r.TLS != nil {
+	if r.TLS != nil {
 		scheme = "https"
 	}
+	// 任意客户端都可以带上 X-Forwarded-Proto。直接采信会把公开文件签成对端打不开的 https，
+	// nexusdock-mcp 也只改写 http:// 开头的地址。只有直连对端落在可信代理网段时才采用最近一跳。
+	if remote := parseRemoteIP(r.RemoteAddr); remote != nil && ipInNetworks(remote, trustedProxyNetworks(cfg.TrustedProxyCIDRs)) {
+		if forwarded := strings.ToLower(lastForwardedValue(r.Header.Get("X-Forwarded-Proto"))); forwarded == "http" || forwarded == "https" {
+			scheme = forwarded
+		}
+	}
 	return scheme + "://" + host
+}
+
+func lastForwardedValue(raw string) string {
+	parts := strings.Split(raw, ",")
+	return strings.TrimSpace(parts[len(parts)-1])
 }
 func serverCard(cfg config.Config, r *http.Request) map[string]any {
 	issuer := issuerFor(cfg, r)

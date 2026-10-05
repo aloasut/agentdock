@@ -50,6 +50,42 @@ func TestHTTPServerHasDefensiveConnectionLimits(t *testing.T) {
 	}
 }
 
+func TestRequestPublicBaseURLIgnoresUntrustedForwardedProto(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "http://10.0.0.8:8765/mcp", nil)
+	request.RemoteAddr = "203.0.113.8:1234"
+	request.Host = "10.0.0.8:8765"
+	request.Header.Set("X-Forwarded-Proto", "https, http")
+	if got := requestPublicBaseURL(config.Config{TrustedProxyCIDRs: []string{"127.0.0.0/8"}}, request); got != "http://10.0.0.8:8765" {
+		t.Fatalf("base = %q", got)
+	}
+
+	trusted := httptest.NewRequest(http.MethodPost, "http://10.0.0.8:8765/mcp", nil)
+	trusted.RemoteAddr = "127.0.0.1:1234"
+	trusted.Host = "10.0.0.8:8765"
+	trusted.Header.Set("X-Forwarded-Proto", "http, https")
+	if got := requestPublicBaseURL(config.Config{TrustedProxyCIDRs: []string{"127.0.0.0/8"}}, trusted); got != "https://10.0.0.8:8765" {
+		t.Fatalf("trusted base = %q", got)
+	}
+}
+
+func TestMCPEndpointCancelNotificationWithoutMetaIsAccepted(t *testing.T) {
+	cfg := testConfig(t)
+	runtime, err := app.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	handler := mcpEndpointHandler(mcp.NewServer(runtime, cfg), cfg, auth.NewOAuthStore())
+	body := `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"1","reason":"context canceled"}}`
+	req := newMCPRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	req.Header.Set("Mcp-Protocol-Version", "2026-07-28")
+	req.Header.Set("Mcp-Method", "notifications/cancelled")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestMCPEndpointNotificationReturnsAcceptedWithEmptyBody(t *testing.T) {
 	cfg := testConfig(t)
 	runtime, err := app.NewRuntime(cfg)
