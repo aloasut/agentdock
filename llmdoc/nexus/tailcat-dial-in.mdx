@@ -18,6 +18,7 @@ code:
     - internal/tailcatnode/doc.go
     - internal/secretredact/redact.go
     - internal/nexusbridge/client.go
+    - internal/nexusbridge/activity_conn.go
     - internal/nexusbridge/host.go
     - internal/nexusbridge/connection_state.go
     - internal/desktopruntime/tunnel_tailcat.go
@@ -53,7 +54,9 @@ Windows 安装程序「保留设置」原样保留 `quick`。交互式「无域�
 
 Nexus 访问 `ws://agentdock.tailcat/v1/nodes/connect`。Host 只是标签，连接串不得进入 URL。监听必须接受这个 Host、缺失的 `Origin` 和缺失的 `Authorization`；`CheckOrigin` 恒为真。传输认证是连接串里的预共享密钥。应用身份仍是 `hello.device_id`，必须等于配对时的设备 ID。
 
-未配对时可以先把服务器拉起来，方便复制连接串，但该路径返回 503，不发假 hello。配对身份文件出现后，同一进程开始出站，并在这条已经拉起的监听上发送 `node.hello`，不必为了拨入再重启。按启动配置注册的 Recall 工具仍要重启后才出现。升级成功后立刻写和出站相同的 `node.hello`：协议版本 `"2"`，没有 UI 资源时 `ui_resources` 必须是空数组。等 `node.ready` 的期限是 15 秒。之后的读超时是两个心跳；心跳间隔沿用 ready 里的值，缺省 30 秒。
+同一个隧道端口也提供 `/mcp`，以及和局域网 HTTP 相同的签名公开文件 `/artifacts/public/`。这是给不经过 NexusDock、由编码代理直接拨入的 Streamable HTTP，请求体上限与本机 `/mcp` 相同。隧道 HTTP 的读头 10 秒、读体 15 秒、空闲 60 秒和 1MiB 头部上限与局域网 HTTP 服务器相同；请求体读完后读截止时间会清掉，长工具调用不会被这 15 秒切断。未配对时节点路径返回 503，`/mcp` 和公开文件仍然可用，其余路径不开放。连接串不能代替 AgentDock 的静态访问令牌；允许名单不为空时，还要放行那台客户端的 `nodekey`。不另开第二个隧道端口。
+
+未配对时可以先把服务器拉起来，方便复制连接串，但该路径返回 503，不发假 hello。配对身份文件出现后，同一进程开始出站，并在这条已经拉起的监听上发送 `node.hello`，不必为了拨入再重启。按启动配置注册的 Recall 工具仍要重启后才出现。升级成功后立刻写和出站相同的 `node.hello`：协议版本 `"2"`，没有 UI 资源时 `ui_resources` 必须是空数组。等 `node.ready` 的期限是 15 秒。之后的空闲读窗口是两个心跳；心跳间隔沿用 ready 里的值，缺省 30 秒。入站连接在每个数据块上重新计算这个窗口。写侧记住应用层的 15 秒底限；gorilla 按帧重复设置同一个绝对截止时间时不缩短底限，单次大块写入再按体积延长，上限 5 分钟，一条 16MiB 的工具结果可以写完。连续约两个心跳没有字节仍结束会话。出站 Device Token 连接继续使用固定的 15 秒写截止。
 
 ## 和出站怎么切换
 

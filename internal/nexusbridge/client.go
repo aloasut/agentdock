@@ -29,7 +29,8 @@ import (
 )
 
 const (
-	maxMessageBytes      = 8 << 20
+	// 与 Nexus 节点连接，以及两边 Streamable HTTP /mcp 的 16MiB 请求体相同。
+	maxMessageBytes      = 16 << 20
 	invokeDrainTimeout   = 5 * time.Second
 	maxReconnectBackoff  = 30 * time.Second
 	readyReadTimeout     = 15 * time.Second
@@ -42,6 +43,9 @@ var errTailcatDial = errors.New("NexusDock Tailcat dial-in is active")
 
 var inboundUpgrader = websocket.Upgrader{
 	HandshakeTimeout: 10 * time.Second,
+	// 读缓冲必须非零。为零时 Upgrade 会复用劫持前的 bufio.Reader，那个 Reader 直接读原始 TCP，
+	// 帧数据就绕过 tailcatActivityConn.Read，空闲读窗口无法按数据块刷新。
+	ReadBufferSize: 4096,
 	// Nexus 的拨号请求没有 Origin，也不能把 Origin 当成身份。
 	CheckOrigin: func(*http.Request) bool { return true },
 }
@@ -175,7 +179,8 @@ func (c *Client) serveInbound(ctx context.Context, w http.ResponseWriter, r *htt
 		return
 	}
 	// 隧道上的认证是连接串里的预共享密钥。这里不看 Authorization，也不要求 Origin。
-	socket, err := inboundUpgrader.Upgrade(w, r, nil)
+	// 劫持到的连接按传输进度放宽截止时间，一条 16MiB 的工具结果可以写完。约两个心跳没有字节仍结束会话。
+	socket, err := inboundUpgrader.Upgrade(tailcatActivityWriter{ResponseWriter: w}, r, nil)
 	if err != nil {
 		return
 	}

@@ -95,14 +95,29 @@ func TestMCPEndpointRejectsOversizedBody(t *testing.T) {
 		t.Fatalf("new runtime: %v", err)
 	}
 	handler := mcpEndpointHandler(mcp.NewServer(runtime, cfg), cfg, auth.NewOAuthStore())
-	body := `{"jsonrpc":"2.0","id":1,"method":"ping"}` + strings.Repeat(" ", (1<<20)+1)
+	body := `{"jsonrpc":"2.0","id":1,"method":"ping"}` + strings.Repeat(" ", int(mcp.MaxRequestBodyBytes)+1)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, newMCPRequest(http.MethodPost, "/mcp", strings.NewReader(body)))
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d; response=%s", recorder.Code, http.StatusRequestEntityTooLarge, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "request body exceeds 1048576 bytes") {
+	if !strings.Contains(recorder.Body.String(), "request body exceeds 16777216 bytes") {
 		t.Fatalf("response = %s", recorder.Body.String())
+	}
+}
+
+func TestMCPEndpointAcceptsBodyOverOneMiB(t *testing.T) {
+	cfg := testConfig(t)
+	runtime, err := app.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	handler := mcpEndpointHandler(mcp.NewServer(runtime, cfg), cfg, auth.NewOAuthStore())
+	body := `{"jsonrpc":"2.0","id":1,"method":"ping"}` + strings.Repeat(" ", (1<<20)+64)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, newMCPRequest(http.MethodPost, "/mcp", strings.NewReader(body)))
+	if recorder.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("1MiB was still rejected: %s", recorder.Body.String())
 	}
 }
 

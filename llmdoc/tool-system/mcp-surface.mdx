@@ -32,7 +32,7 @@ code:
 
 ## 传输旋钮（Streamable HTTP）
 
-Stateless:true、JSONResponse:true、1MiB body cap；`PropagateRequestCancellation:true`（取消只及本次调用，见 execution-model）。
+Stateless:true、JSONResponse:true、16MiB body cap（与 NexusDock `/mcp` 和节点 WebSocket 相同）；`PropagateRequestCancellation:true`（取消只及本次调用，见 execution-model）。默认传输是这条 Streamable HTTP，stdio 只在显式 `--stdio` 时使用。Tailcat 隧道的同一个端口也挂这份 `/mcp` 和签名公开文件 `/artifacts/public/`，供编码代理直接拨入；连接串不能代替静态访问令牌。
 
 **localhost 保护（实测契约，v0.8.4/0.9.1 一致）**：SDK 校验请求 Host 头——回环 Host
 （`127.0.0.1`/`localhost`，端口任意）放行；非回环 Host → **403 `Forbidden: invalid Host

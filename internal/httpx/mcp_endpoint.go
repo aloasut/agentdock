@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -42,6 +43,16 @@ func agentDockContextHandler(server *mcp.Server, cfg config.Config, oauthStore *
 		writeJSON(w, result)
 	}
 }
+
+// MCPHandler 是与本机 /mcp 相同的 Streamable HTTP。
+// 隧道上的连接串不能代替这里检查的 Bearer。传入空的 OAuth 库时只认静态访问令牌。
+func MCPHandler(server *mcp.Server, cfg config.Config, oauthStore *auth.OAuthStore) http.Handler {
+	if oauthStore == nil {
+		oauthStore = auth.NewOAuthStore()
+	}
+	return mcpEndpointHandler(server, cfg, oauthStore)
+}
+
 func mcpEndpointHandler(server *mcp.Server, cfg config.Config, oauthStore *auth.OAuthStore) http.HandlerFunc {
 	authorizer := auth.Bearer{Token: cfg.AuthToken}
 	authRequired := cfg.AuthRequired()
@@ -63,11 +74,11 @@ func mcpEndpointHandler(server *mcp.Server, cfg config.Config, oauthStore *auth.
 	}
 }
 func prepareMCPRequestBody(w http.ResponseWriter, r *http.Request) bool {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, mcp.MaxRequestBodyBytes))
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			http.Error(w, "request body exceeds 1048576 bytes", http.StatusRequestEntityTooLarge)
+			http.Error(w, fmt.Sprintf("request body exceeds %d bytes", mcp.MaxRequestBodyBytes), http.StatusRequestEntityTooLarge)
 			return false
 		}
 		writeJSON(w, map[string]any{

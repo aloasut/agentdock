@@ -24,7 +24,7 @@ code:
 
 ## 协议边界
 
-- WebSocket 客户端（消息上限 8MB）；**应用层协议在外部模块 `github.com/uvwt/agentdock-protocol`**，
+- WebSocket 客户端（消息上限 16MiB，与两边 Streamable HTTP `/mcp` 的请求体相同）；**应用层协议在外部模块 `github.com/uvwt/agentdock-protocol`**，
   本仓库侧边界是窄接口 `NodeAPI`：ToolNames/ToolDescriptors/UIResources/ToolContractHash/
   AgentDockLocalContext/Invoke/ReadAppResource。
 - 远端经 Bridge 调到的能力与 Runtime API 共享同一契约（见 tool-system/runtime-api）；

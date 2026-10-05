@@ -19,6 +19,10 @@ import (
 	"github.com/uvwt/agentdock/internal/observability"
 )
 
+// MaxRequestBodyBytes 是本机 Streamable HTTP /mcp 的请求体上限。
+// 与 NexusDock /mcp、nexusdock-mcp，以及两边节点 WebSocket 的 16MiB 对齐，避免内容在某一跳被截掉。
+const MaxRequestBodyBytes int64 = 16 << 20
+
 type Server struct {
 	runtime     *app.Runtime
 	cfg         config.Config
@@ -47,10 +51,11 @@ func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 		&mcpsdk.StreamableHTTPOptions{
 			// 仅在显式配置公网 URL 且启用认证时放宽 SDK 的 localhost Host 校验。
 			// 反代或 Tunnel 会保留公网 Host，入口仍由静态 Token 或 OAuth resource 绑定保护。
-			DisableLocalhostProtection:   cfg.OAuthServerURL != "" && cfg.AuthRequired(),
-			Stateless:                    true,
-			JSONResponse:                 true,
-			MaxRequestBodyBytes:          1 << 20,
+			DisableLocalhostProtection: cfg.OAuthServerURL != "" && cfg.AuthRequired(),
+			Stateless:                  true,
+			JSONResponse:               true,
+			// 与入口 prepareMCPRequestBody、NexusDock /mcp、nexusdock-mcp 和节点 WebSocket 的 16MiB 相同。
+			MaxRequestBodyBytes:          MaxRequestBodyBytes,
 			PropagateRequestCancellation: true,
 		},
 	)

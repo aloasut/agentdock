@@ -60,6 +60,6 @@ code:
 - 统一错误类型 `tool/core.ToolError{Code,Category,Retryable}` → MCP `isError:true` envelope。
   `Retryable=true`（如 ACP_BUSY、ACP_CONNECTION_CLOSED）客户端可重试；validation 类一律 false。
 - **超时不是错误**：命令超时返回 `status:"timeout"` + `command_error`。
-- 输出上限体系：命令输出 4MiB 截断（BoundedOutput 记录 total+truncated，不报错）、MCP body 1MiB；
+- 输出上限体系：命令输出 4MiB 截断（BoundedOutput 记录 total+truncated，不报错）、MCP body 16MiB；
   截断信息显式进入结果，永不因大输出崩协议。
 - secret redaction 内建 GitHub PAT/token 模式，各能力包可追加 pattern；日志/stderr 不得泄凭据。

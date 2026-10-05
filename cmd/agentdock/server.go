@@ -134,6 +134,9 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 	// 配对文件可以在启动之后才写上。Host 会自己开始出站；Tailcat 监听在那之前返回 503。
 	artifactStore := publicartifacts.New(cfg.AgentDockHome, cfg.OAuthServerURL, cfg.Port)
 	bridgeHost := nexusbridge.NewHost(cfg.AgentDockHome, server, runtime, artifactStore, nexusStatus)
+	// 隧道和本机 HTTP 都提供 /mcp。这里用独立的内存 OAuth 库，静态访问令牌仍然有效。
+	// 连接串不能代替这枚令牌。
+	bridgeHost.UseMCP(httpx.MCPHandler(server, cfg, nil))
 	bridgeWG.Add(1)
 	go func() {
 		defer bridgeWG.Done()

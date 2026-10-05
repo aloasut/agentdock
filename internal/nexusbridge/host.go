@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,7 @@ type Host struct {
 	running  *runningBridge
 	identity Identity
 	paired   bool
+	mcp      http.Handler
 }
 
 func NewHost(home string, node NodeAPI, runtime runtimeapi.Runtime, artifacts publicartifacts.Store, state *ConnectionState) *Host {
@@ -59,19 +61,22 @@ func (h *Host) Run(ctx context.Context) {
 	}
 }
 
-// Serve 在 Tailcat 监听上接受节点 WebSocket。还没有配对身份时返回 503。
-func (h *Host) Serve(ctx context.Context, ln net.Listener) error {
-	server := &http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			client, sessionCtx := h.current()
-			if client == nil {
-				http.Error(w, "agentdock is not paired", http.StatusServiceUnavailable)
-				return
-			}
-			client.serveInbound(sessionCtx, w, r)
-		}),
-		ReadHeaderTimeout: 10 * time.Second,
+// UseMCP 把本机同一份 Streamable HTTP /mcp 挂到 Tailcat 这一个端口上。
+// 不另开隧道端口。连接串仍然不是 MCP 令牌，身份检查留在 handler 里面。
+func (h *Host) UseMCP(handler http.Handler) {
+	if h == nil {
+		return
 	}
+	h.mu.Lock()
+	h.mcp = handler
+	h.mu.Unlock()
+}
+
+// Serve 在 Tailcat 监听上接受节点 WebSocket，并在 /mcp 提供编码代理用的 Streamable HTTP。
+// 同一端口也提供 /artifacts/public/，签名规则和局域网 HTTP 相同。
+// 还没有配对身份时，节点路径返回 503；/mcp 和公开文件不依赖这次配对。
+func (h *Host) Serve(ctx context.Context, ln net.Listener) error {
+	server := newTunnelHTTPServer(h.tunnelHandler())
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -88,6 +93,46 @@ func (h *Host) Serve(ctx context.Context, ln net.Listener) error {
 		return nil
 	}
 	return err
+}
+
+// newTunnelHTTPServer 的读限制与局域网 HTTP 服务器相同。
+// 请求体读完后 Go 会清掉读截止时间，长工具调用不会被这 15 秒切断，因此不设 WriteTimeout。
+func newTunnelHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+}
+
+func (h *Host) tunnelHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/mcp" {
+			h.mu.Lock()
+			handler := h.mcp
+			h.mu.Unlock()
+			if handler == nil {
+				http.NotFound(w, r)
+				return
+			}
+			handler.ServeHTTP(w, r)
+			return
+		}
+		// 工具结果里的公开文件地址在局域网直连时由本机 HTTP 提供。隧道必须走同一份存储，
+		// 否则编码代理拿到 URL 后无法下载。签名本身就是访问能力，不要求节点已经配对。
+		if strings.HasPrefix(r.URL.Path, "/artifacts/public/") {
+			h.artifacts.ServeHTTP(w, r, "/artifacts/public/")
+			return
+		}
+		client, sessionCtx := h.current()
+		if client == nil {
+			http.Error(w, "agentdock is not paired", http.StatusServiceUnavailable)
+			return
+		}
+		client.serveInbound(sessionCtx, w, r)
+	})
 }
 
 func (h *Host) current() (*Client, context.Context) {
