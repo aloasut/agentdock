@@ -24,13 +24,13 @@
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "execution-model.mdx": {
-      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
+      "validatedRevision": "9e7a97413824fa8f87fa5eb49005b14ebfea4d5f"
     },
     "nexus/nexus-bridge.mdx": {
-      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
+      "validatedRevision": "9e7a97413824fa8f87fa5eb49005b14ebfea4d5f"
     },
     "security/authentication.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "9e7a97413824fa8f87fa5eb49005b14ebfea4d5f"
     },
     "security/configuration.mdx": {
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
@@ -57,19 +57,19 @@
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/add-a-tool.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "9e7a97413824fa8f87fa5eb49005b14ebfea4d5f"
     },
     "tool-system/context-tools.mdx": {
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "tool-system/mcp-surface.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "9e7a97413824fa8f87fa5eb49005b14ebfea4d5f"
     },
     "tool-system/runtime-api.mdx": {
       "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
     },
     "tool-system/tool-runtime.mdx": {
-      "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
+      "validatedRevision": "9e7a97413824fa8f87fa5eb49005b14ebfea4d5f"
     },
     "update-delivery/install-engine.mdx": {
       "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
@@ -105,7 +105,7 @@
       "validatedRevision": "e08474fe3883ce38c4b7fed9001788f2e2d4d49a"
     },
     "nexus/tailcat-dial-in.mdx": {
-      "validatedRevision": "7b7296ab1e33712b900207eef48e798778381ea3"
+      "validatedRevision": "9e7a97413824fa8f87fa5eb49005b14ebfea4d5f"
     }
   },
   "convergence": {
