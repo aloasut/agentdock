@@ -57,7 +57,7 @@ README 的"公共访问必须保持认证开启"落点在这里，而不是请�
 
 `/register` 30 次/分钟、`/oauth/authorize` POST 10 次/5 分钟（固定窗口）。只有直接对端 IP ∈
 `AGENTDOCK_TRUSTED_PROXY_CIDRS` 才信任 `X-Forwarded-For` 链，且链中有不可解析项立即回退直接对端
-——不能部分信任。
+——不能部分信任。`X-Forwarded-Proto` 用同一条边界：只在直接对端落在这份名单时采用最近一跳，而且只接受 `http` 或 `https`。名单默认空，客户端自带的协议头不会把公开文件签成 https。已配置的 `OAuthServerURL` 优先于请求 Host。nexusdock-mcp 只改写 `http://` 开头的地址，因此隧道上的文件地址保持 `http://agentdock.tailcat:<端口>`。
 
 ## 失败语义
 

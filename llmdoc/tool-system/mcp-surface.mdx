@@ -1,5 +1,5 @@
 ---
-description: "MCP 协议面速查：toolEnvelope 成功/错误结构、Retryable 重试约定、view_image 图片提升、mcp_tool_call 透传、_meta 注入点、MCP Apps UI 资源门控（只是界面卡片不是插件机制）/ tool envelope, mcp apps, dynamic mcp envelope"
+description: "MCP 协议面速查：toolEnvelope 成功/错误结构、Retryable 重试约定、view_image 图片提升、mcp_tool_call 透传、_meta 注入点、取消通知补协议 meta 以免关掉会话、MCP Apps UI 资源门控（只是界面卡片不是插件机制）/ tool envelope, mcp apps, dynamic mcp envelope, notifications/cancelled"
 kind: reference
 relations:
   related:
@@ -8,6 +8,7 @@ code:
   paths:
     - internal/mcp/server.go
     - internal/mcp/apps.go
+    - internal/httpx/mcp_cancel_meta.go
 ---
 
 # MCP 协议面（envelope、Apps、动态 MCP）
@@ -32,7 +33,7 @@ code:
 
 ## 传输旋钮（Streamable HTTP）
 
-Stateless:true、JSONResponse:true、16MiB body cap（与 NexusDock `/mcp` 和节点 WebSocket 相同）；`PropagateRequestCancellation:true`（取消只及本次调用，见 execution-model）。默认传输是这条 Streamable HTTP，stdio 只在显式 `--stdio` 时使用。Tailcat 隧道的同一个端口也挂这份 `/mcp` 和签名公开文件 `/artifacts/public/`，供编码代理直接拨入；连接串不能代替静态访问令牌。
+Stateless:true、JSONResponse:true、16MiB body cap（与 NexusDock `/mcp` 和节点 WebSocket 相同）；`PropagateRequestCancellation:true`（取消只及本次调用，见 execution-model）。协议头不低于 `2026-07-28` 时，没有 `id`、也没有协议版本 meta 的 `notifications/cancelled` 会在进入 SDK 前补上协议版本和空的 clientCapabilities。漏掉这些字段时服务端返回 400，客户端会把整段会话当成损坏；补上之后会话还在，正在执行的调用仍然取消。默认传输是这条 Streamable HTTP，stdio 只在显式 `--stdio` 时使用。Tailcat 隧道的同一个端口也挂这份 `/mcp` 和签名公开文件 `/artifacts/public/`，供编码代理直接拨入；连接串不能代替静态访问令牌。
 
 **localhost 保护（实测契约，v0.8.4/0.9.1 一致）**：SDK 校验请求 Host 头——回环 Host
 （`127.0.0.1`/`localhost`，端口任意）放行；非回环 Host → **403 `Forbidden: invalid Host

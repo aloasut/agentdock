@@ -1,5 +1,5 @@
 ---
-description: "仓库级执行模型 owner：cmd/agentdock 启动链、传输同生命周期并行（HTTP+desktopcontrol+Nexus bridge）、Runtime.Close 关闭次序不变量、子进程绑定共享 commandCtx 而非请求 ctx、进程组 killpg 语义 / startup chain, graceful shutdown, close ordering, process group, runtime lifecycle"
+description: "仓库级执行模型 owner：cmd/agentdock 启动链、传输同生命周期并行（HTTP+desktopcontrol+Nexus bridge）、配对文件可在启动后出现、Runtime.Close 关闭次序不变量、子进程绑定共享 commandCtx、前台等待随调用取消结束、进程组 killpg 语义 / startup chain, graceful shutdown, close ordering, process group, runtime lifecycle, request_cancelled"
 kind: architecture
 code:
   paths:
@@ -38,7 +38,7 @@ code:
 - 设置 `AGENTDOCK_RUNTIME_ROOT` 时，`httpx.Serve` 与 `desktopcontrol.Serve`
   **同生命周期并行**，任一退出即 cancel 另一个（禁止后台只剩半套控制面）。
   同一 runtime root 还按服务模式决定是否拉起 Tailcat 服务器（契约见 nexus/tailcat-dial-in）。
-- 存在配对身份时另起 nexusbridge goroutine。Tailcat 服务器与这条桥共用 `bridgeWG`；
+- 节点桥在 HTTP 模式下始终启动，并轮询配对身份文件。文件可以在进程起来之后才出现；出现前 Tailcat 上的节点路径返回 503，`/mcp` 和签名公开文件不依赖这次配对。设置了 `AGENTDOCK_RUNTIME_ROOT` 时，Tailcat 服务器与这条桥共用 `bridgeWG`；
   `bridgeWG.Wait()` 必须先于 `Runtime.Close`——Bridge 必须先 drain 再关 Runtime。
 
 ## Runtime.Close 次序（不变量）
@@ -57,9 +57,8 @@ ACP 关机的专门次序：对每个 running run **先 `finishRun(RunInterrupte
 ## 子进程生命周期（最重要的单点决策）
 
 子进程（命令执行、ACP adapter）绑定 **共享 commandCtx，不绑定单次 MCP 请求 ctx**。
-`exec_command` 会先返回 running 让模型后续观察；绑定请求 ctx 会在请求结束时杀掉
-`git push`、`npm install` 等长任务。长任务只受 `timeout_ms` 与 session `kill`/`kill_all` 控制。
-同理，HTTP 请求取消（`PropagateRequestCancellation`）只取消该次工具调用，不牵连已启动的子进程。
+`exec_command` 的 async，以及 auto 已经交出 session 的长任务，只受 `timeout_ms` 与 session `kill`/`kill_all` 控制。若把这些进程绑到请求 ctx，请求结束就会杀掉
+`git push`、`npm install`。例外是还在前台等待的 sync，以及 auto 在 yield 之前：这次调用取消会结束该进程树，结果记 `request_cancelled`。HTTP 取消通知本身只结束这一次工具调用，不关掉 MCP 会话。
 
 ## 进程组与平台差异
 
