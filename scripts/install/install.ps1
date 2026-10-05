@@ -9,7 +9,7 @@ param(
     [switch] $ConfigurePublicAccess,
     [int] $Port = 8765,
     [string] $AuthToken = '',
-    [ValidateSet('auto', 'none', 'quick', 'tailcat', 'named')]
+    [ValidateSet('auto', 'none', 'quick', 'named', 'tailcat')]
     [string] $TunnelMode = 'auto',
     [string] $ServerUrl = '',
     [string] $TunnelToken = '',
@@ -91,14 +91,6 @@ function Get-ReleaseBaseUrl {
         $normalizedVersion = "v$normalizedVersion"
     }
     return "https://github.com/uvwt/agentdock/releases/download/$normalizedVersion"
-}
-
-function Get-CloudflaredReleaseBaseUrl {
-    $customBaseUrl = [Environment]::GetEnvironmentVariable('AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL')
-    if (-not [string]::IsNullOrWhiteSpace($customBaseUrl)) {
-        return $customBaseUrl.TrimEnd('/')
-    }
-    return 'https://github.com/cloudflare/cloudflared/releases/latest/download'
 }
 
 function Get-Sha256Hex {
@@ -234,113 +226,6 @@ function Write-TextFile {
     )
 
     [IO.File]::WriteAllText($Path, $Value, $Utf8NoBom)
-}
-
-function Normalize-ServerUrl {
-    param([string] $Value)
-
-    $trimmed = $Value.Trim().TrimEnd('/')
-    if ([string]::IsNullOrWhiteSpace($trimmed)) {
-        throw 'A fixed Cloudflare hostname requires an HTTPS public origin.'
-    }
-    try {
-        $uri = [Uri] $trimmed
-    } catch {
-        throw "Invalid public origin: $Value"
-    }
-    if (-not $uri.IsAbsoluteUri -or $uri.Scheme -ne 'https' -or [string]::IsNullOrWhiteSpace($uri.Host)) {
-        throw "The public origin must be an absolute HTTPS URL: $Value"
-    }
-    if ($uri.AbsolutePath -ne '/' -or $uri.Query -or $uri.Fragment -or $uri.UserInfo) {
-        throw "The public origin must not contain a path, query, fragment, or user info: $Value"
-    }
-    return $trimmed
-}
-
-function Resolve-TunnelMode {
-    param(
-        [string] $RequestedMode,
-        [string] $ModePath,
-        [bool] $StartupRequested,
-        [bool] $PublicAccessRequested
-    )
-
-    if ($RequestedMode -ne 'auto') {
-        return $RequestedMode.ToLowerInvariant()
-    }
-
-    $environmentMode = [Environment]::GetEnvironmentVariable('AGENTDOCK_TUNNEL_MODE')
-    if (-not [string]::IsNullOrWhiteSpace($environmentMode)) {
-        $environmentMode = $environmentMode.Trim().ToLowerInvariant()
-        if (@('none', 'quick', 'tailcat', 'named') -notcontains $environmentMode) {
-            throw "AGENTDOCK_TUNNEL_MODE must be none, quick, tailcat, or named: $environmentMode"
-        }
-        return $environmentMode
-    }
-
-    $storedMode = Read-TextFile -Path $ModePath
-    if (-not [string]::IsNullOrWhiteSpace($storedMode)) {
-        $storedMode = $storedMode.ToLowerInvariant()
-        if (@('quick', 'tailcat', 'named') -contains $storedMode) {
-            Write-Host "Reusing service mode: $storedMode"
-            return $storedMode
-        }
-    }
-
-    if (-not $StartupRequested -or -not $PublicAccessRequested) {
-        return 'none'
-    }
-
-    Write-Host ''
-    Write-Host 'Choose how AgentDock is reached:'
-    Write-Host '- Have a Cloudflare domain: use a fixed address for long-running clients and OAuth.'
-    Write-Host '- No domain: run Tailcat. Copy the connection string and TCP port into NexusDock. This does not publish a public MCP address.'
-    $answer = Read-Host 'Do you have a domain already connected to Cloudflare? [y/N]'
-    if ($answer -match '^(?i:y|yes)$') {
-        return 'named'
-    }
-    return 'tailcat'
-}
-
-function Read-SecretFile {
-    param([string] $Path)
-
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        return ''
-    }
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Secret file was not found: $Path"
-    }
-    $value = (Get-Content -LiteralPath $Path -Raw).Trim()
-    if ([string]::IsNullOrWhiteSpace($value)) {
-        throw "Secret file is empty: $Path"
-    }
-    return $value
-}
-
-function Resolve-AvailableTunnelToken {
-    param(
-        [string] $TokenPath,
-        [string] $RequestedToken,
-        [string] $TokenFile
-    )
-
-    $existingToken = Read-ProtectedText -Path $TokenPath -Entropy 'agentdock.cloudflare.tunnel.v1'
-    $resolvedToken = $RequestedToken
-    if ([string]::IsNullOrWhiteSpace($resolvedToken) -and -not [string]::IsNullOrWhiteSpace($TokenFile)) {
-        $resolvedToken = Read-SecretFile -Path $TokenFile
-    }
-    if ([string]::IsNullOrWhiteSpace($resolvedToken)) {
-        $resolvedToken = [Environment]::GetEnvironmentVariable('AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN')
-    }
-    if ([string]::IsNullOrWhiteSpace($resolvedToken)) {
-        $resolvedToken = $existingToken
-    }
-
-    return [pscustomobject]@{
-        Token = $resolvedToken
-        ExistingToken = $existingToken
-    }
 }
 
 function Initialize-OAuthCredentials {
@@ -618,11 +503,6 @@ function Get-AgentDockProcesses {
     return @(Get-ProcessesByPath -ProcessName $processName -BinaryPath $BinaryPath)
 }
 
-function Get-CloudflaredProcesses {
-    param([string] $BinaryPath)
-    return @(Get-ProcessesByPath -ProcessName 'cloudflared' -BinaryPath $BinaryPath)
-}
-
 function Get-AgentDockTrayProcesses {
     param([string] $BinaryPath)
     return @(Get-ProcessesByPath -ProcessName 'agentdock-tray' -BinaryPath $BinaryPath)
@@ -631,19 +511,16 @@ function Get-AgentDockTrayProcesses {
 function Test-AgentDockTaskEligible {
     param(
         [string] $AgentDockValueName,
-        [string] $CloudflaredValueName,
         [string] $TrayValueName
     )
 
     return $AgentDockValueName -eq 'AgentDock' -and
-        $CloudflaredValueName -eq 'AgentDockCloudflared' -and
         $TrayValueName -eq 'AgentDockTray'
 }
 
 function Get-AgentDockTaskState {
     param(
         [string] $AgentDockValueName,
-        [string] $CloudflaredValueName,
         [string] $TrayValueName,
         [string] $RuntimeRoot,
         [string] $StableCorePath,
@@ -662,7 +539,6 @@ function Get-AgentDockTaskState {
     }
     $state.Eligible = Test-AgentDockTaskEligible `
         -AgentDockValueName $AgentDockValueName `
-        -CloudflaredValueName $CloudflaredValueName `
         -TrayValueName $TrayValueName
     if (-not $state.Eligible) {
         return $state
@@ -853,11 +729,6 @@ function Stop-AgentDockForUpgrade {
     return Stop-ProcessesForUpgrade -ProcessName $processName -BinaryPath $BinaryPath
 }
 
-function Stop-CloudflaredForUpgrade {
-    param([string] $BinaryPath)
-    return Stop-ProcessesForUpgrade -ProcessName 'cloudflared' -BinaryPath $BinaryPath
-}
-
 function Stop-AgentDockTrayForUpgrade {
     param([string] $BinaryPath)
     return Stop-ProcessesForUpgrade -ProcessName 'agentdock-tray' -BinaryPath $BinaryPath
@@ -882,11 +753,6 @@ function Start-AgentDockLauncher {
     Start-HiddenPowerShellScript -ScriptPath $LauncherPath
 }
 
-function Start-CloudflaredLauncher {
-    param([string] $LauncherPath)
-    Start-HiddenPowerShellScript -ScriptPath $LauncherPath
-}
-
 function Start-AgentDockTray {
     param([string] $BinaryPath)
 
@@ -898,59 +764,6 @@ function Start-AgentDockTray {
         return
     }
     Start-Process -FilePath $BinaryPath -ArgumentList '--background' -WindowStyle Hidden | Out-Null
-}
-
-function Test-CloudflaredBinary {
-    param([string] $BinaryPath)
-
-    if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
-        return $false
-    }
-    try {
-        & $BinaryPath --version | Out-Null
-        return $LASTEXITCODE -eq 0
-    } catch {
-        return $false
-    }
-}
-
-function Install-CloudflaredBinary {
-    param(
-        [string] $DestinationBinary,
-        [string] $Architecture,
-        [string] $TempDirectory,
-        [string] $SourceBinary = ''
-    )
-
-    $sourceOverride = $SourceBinary
-    if ([string]::IsNullOrWhiteSpace($sourceOverride)) {
-        $sourceOverride = [Environment]::GetEnvironmentVariable('AGENTDOCK_CLOUDFLARED_BINARY')
-    }
-    if (-not [string]::IsNullOrWhiteSpace($sourceOverride)) {
-        if (-not (Test-CloudflaredBinary -BinaryPath $sourceOverride)) {
-            throw "The supplied cloudflared binary is invalid: $sourceOverride"
-        }
-        $stagedPath = "$DestinationBinary.tmp.$PID"
-        Copy-Item -LiteralPath $sourceOverride -Destination $stagedPath -Force
-        Move-Item -LiteralPath $stagedPath -Destination $DestinationBinary -Force
-        return
-    }
-
-    if (Test-CloudflaredBinary -BinaryPath $DestinationBinary) {
-        return
-    }
-
-    $assetName = "cloudflared-windows-$Architecture.exe"
-    $downloadPath = Join-Path $TempDirectory $assetName
-    $downloadUrl = "$(Get-CloudflaredReleaseBaseUrl)/$assetName"
-    Write-Host "Downloading cloudflared: $downloadUrl"
-    Invoke-WebRequest -UseBasicParsing -Uri $downloadUrl -OutFile $downloadPath
-    if (-not (Test-CloudflaredBinary -BinaryPath $downloadPath)) {
-        throw "Downloaded cloudflared executable is invalid: $downloadUrl"
-    }
-    $stagedPath = "$DestinationBinary.tmp.$PID"
-    Copy-Item -LiteralPath $downloadPath -Destination $stagedPath -Force
-    Move-Item -LiteralPath $stagedPath -Destination $DestinationBinary -Force
 }
 
 function Wait-AgentDockHealth {
@@ -1120,26 +933,19 @@ $checksumPath = "$archivePath.sha256"
 $destinationBinary = Join-Path $InstallDir 'agentdock.exe'
 $destinationTrayBinary = Join-Path $InstallDir 'agentdock-tray.exe'
 $destinationTrayIcon = Join-Path $InstallDir 'agentdock.ico'
-$cloudflaredBinary = Join-Path $InstallDir 'cloudflared.exe'
 $binaryBackup = Join-Path $tempRoot 'agentdock.exe.previous'
 $trayBackup = Join-Path $tempRoot 'agentdock-tray.exe.previous'
 $trayIconBackup = Join-Path $tempRoot 'agentdock.ico.previous'
-$cloudflaredBackup = Join-Path $tempRoot 'cloudflared.exe.previous'
 $runtimeDir = Split-Path -Parent $InstallDir
 $versionsDir = Join-Path $runtimeDir 'versions'
 $activeVersionPath = Join-Path $runtimeDir 'active-version.json'
 $legacyManagerPath = Join-Path $runtimeDir 'installer\manage-windows.ps1'
 $launcherPath = Join-Path $runtimeDir 'start-agentdock.ps1'
-$cloudflaredLauncherPath = Join-Path $runtimeDir 'start-cloudflared.ps1'
 $tokenPath = Join-Path $runtimeDir 'auth-token.dpapi'
 $oauthPasswordPath = Join-Path $runtimeDir 'oauth-password.dpapi'
 $oauthTokenSecretPath = Join-Path $runtimeDir 'oauth-token-secret.dpapi'
 $credentialOwnerSidPath = Join-Path $runtimeDir 'credential-owner-sid.txt'
-$serverUrlPath = Join-Path $runtimeDir 'server-url.txt'
-$namedServerUrlPath = Join-Path $runtimeDir 'named-server-url.txt'
 $controlPanelSettingsPath = Join-Path $runtimeDir 'control-panel-settings.json'
-$tunnelModePath = Join-Path $runtimeDir 'cloudflared-mode.txt'
-$tunnelTokenPath = Join-Path $runtimeDir 'cloudflared-token.dpapi'
 $runtimeManifestPath = Join-Path $runtimeDir 'runtime.json'
 $runtimeAgentDockHome = [Environment]::GetEnvironmentVariable('AGENTDOCK_HOME', 'Process')
 $runtimeAgentDockDefaultDir = [Environment]::GetEnvironmentVariable('AGENTDOCK_DEFAULT_DIR', 'Process')
@@ -1172,33 +978,24 @@ if (-not [IO.Path]::IsPathRooted($runtimeAgentDockHome) -or -not [IO.Path]::IsPa
 $runtimeAgentDockHome = [IO.Path]::GetFullPath($runtimeAgentDockHome)
 $runtimeAgentDockDefaultDir = [IO.Path]::GetFullPath($runtimeAgentDockDefaultDir)
 $desktopVersionPath = Join-Path $runtimeDir 'desktop-version.txt'
-$quickTunnelUrlPath = Join-Path $runtimeDir 'quick-tunnel-url.txt'
-$cloudflaredStdoutLogPath = Join-Path $runtimeDir 'cloudflared.out.log'
-$cloudflaredStderrLogPath = Join-Path $runtimeDir 'cloudflared.err.log'
 $runtimeBackupDir = Join-Path $tempRoot 'runtime-backup'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $runValueName = $StartupValueName
-$cloudflaredRunValueName = $CloudflaredStartupValueName
 $trayRunValueName = $TrayStartupValueName
 $processWasRunning = $false
 $trayProcessWasRunning = $false
-$cloudflaredProcessWasRunning = $false
 $agentDockStopAttempted = $false
 $trayStopAttempted = $false
-$cloudflaredStopAttempted = $false
 $rollbackStateCaptured = $false
 $engineCommitted = $false
 $enginePrepared = $false
 $engineTransactionId = ''
 $installerTransactionLease = $null
 $stableFilesMayBeReplaced = $false
-$cloudflaredReplacementStarted = $false
 $startupRegistrationChanged = $false
 $trayStartupRegistrationChanged = $false
-$tunnelStartupRegistrationChanged = $false
 $previousRunValue = $null
 $previousTrayRunValue = $null
-$previousTunnelRunValue = $null
 $taskBackupDirectory = Join-Path $tempRoot 'scheduled-task-backup'
 $taskTransactionStarted = $false
 $taskTransactionCommitted = $false
@@ -1212,19 +1009,13 @@ $managedRuntimeFiles = @(
     # Migration cleanup only: current payload no longer publishes or executes this compatibility script.
     @{ Path = $legacyManagerPath; Name = 'legacy-manage-windows.ps1' },
     @{ Path = $launcherPath; Name = 'start-agentdock.ps1' },
-    @{ Path = $cloudflaredLauncherPath; Name = 'start-cloudflared.ps1' },
     @{ Path = $tokenPath; Name = 'auth-token.dpapi' },
     @{ Path = $oauthPasswordPath; Name = 'oauth-password.dpapi' },
     @{ Path = $oauthTokenSecretPath; Name = 'oauth-token-secret.dpapi' },
     @{ Path = $credentialOwnerSidPath; Name = 'credential-owner-sid.txt' },
-    @{ Path = $serverUrlPath; Name = 'server-url.txt' },
-    @{ Path = $namedServerUrlPath; Name = 'named-server-url.txt' },
     @{ Path = $controlPanelSettingsPath; Name = 'control-panel-settings.json' },
-    @{ Path = $tunnelModePath; Name = 'cloudflared-mode.txt' },
-    @{ Path = $tunnelTokenPath; Name = 'cloudflared-token.dpapi' },
     @{ Path = $runtimeManifestPath; Name = 'runtime.json' },
     @{ Path = $desktopVersionPath; Name = 'desktop-version.txt' },
-    @{ Path = $quickTunnelUrlPath; Name = 'quick-tunnel-url.txt' },
     @{ Path = $activeVersionPath; Name = 'active-version.json' },
     @{ Path = (Join-Path $runtimeDir 'update\transaction.json'); Name = 'update-transaction.json' },
     @{ Path = (Join-Path $runtimeDir 'update\result.json'); Name = 'update-result.json' }
@@ -1244,7 +1035,6 @@ try {
     $taskUser = Get-CurrentTaskUser
     $taskState = Get-AgentDockTaskState `
         -AgentDockValueName $runValueName `
-        -CloudflaredValueName $cloudflaredRunValueName `
         -TrayValueName $trayRunValueName `
         -RuntimeRoot $runtimeDir `
         -StableCorePath $destinationBinary `
@@ -1272,13 +1062,43 @@ try {
         throw "Windows Task Scheduler is required to preserve administrator-enhanced AgentDock mode: $($taskState.SchedulerError)"
     }
 
-    $resolvedTunnelMode = Resolve-TunnelMode `
-        -RequestedMode $TunnelMode `
-        -ModePath $tunnelModePath `
-        -StartupRequested ([bool] $RegisterStartup) `
-        -PublicAccessRequested ([bool] $ConfigurePublicAccess)
-    $cloudflaredTunnel = @('quick', 'named') -contains $resolvedTunnelMode
-    if ($resolvedTunnelMode -ne 'none' -or (Test-Path -LiteralPath $tunnelModePath -PathType Leaf)) {
+    # Cloudflare parameters remain only as a legacy script/silent-install compatibility shim.
+    # The base Installer never reads existing Tunnel mode and never pulls cloudflared back
+    # into the install transaction because an older Quick/Named configuration exists.
+    $legacyTunnelCompatibilityRequested =
+        $PSBoundParameters.ContainsKey('TunnelMode') -or
+        [bool] $ConfigurePublicAccess -or
+        $PSBoundParameters.ContainsKey('ServerUrl') -or
+        $PSBoundParameters.ContainsKey('TunnelToken') -or
+        $PSBoundParameters.ContainsKey('TunnelTokenFile') -or
+        $PSBoundParameters.ContainsKey('OfflineCloudflaredBinary')
+    $resolvedTunnelMode = ''
+    if ($legacyTunnelCompatibilityRequested) {
+        if ($TunnelMode -ne 'auto') {
+            $resolvedTunnelMode = $TunnelMode.ToLowerInvariant()
+        } else {
+            $environmentMode = [Environment]::GetEnvironmentVariable('AGENTDOCK_TUNNEL_MODE')
+            if (-not [string]::IsNullOrWhiteSpace($environmentMode)) {
+                $environmentMode = $environmentMode.Trim().ToLowerInvariant()
+                # tailcat 是拨入模式，不是 Cloudflare 组件。静默安装必须接受它，不能当成非法模式丢掉。
+                if (@('none', 'quick', 'named', 'tailcat') -notcontains $environmentMode) {
+                    throw "AGENTDOCK_TUNNEL_MODE must be none, quick, named, or tailcat: $environmentMode"
+                }
+                $resolvedTunnelMode = $environmentMode
+            } elseif ($ConfigurePublicAccess) {
+                if (-not [string]::IsNullOrWhiteSpace($ServerUrl) -or
+                    -not [string]::IsNullOrWhiteSpace($TunnelToken) -or
+                    -not [string]::IsNullOrWhiteSpace($TunnelTokenFile)) {
+                    $resolvedTunnelMode = 'named'
+                } else {
+                    $resolvedTunnelMode = 'quick'
+                }
+            } else {
+                $resolvedTunnelMode = 'none'
+            }
+        }
+    }
+    if (@('quick', 'named') -contains $resolvedTunnelMode) {
         $RegisterStartup = $true
     }
 
@@ -1304,20 +1124,6 @@ try {
         throw 'AgentDock credentials belong to a different Windows user. Run Setup from the original user account or perform a clean reinstall.'
     }
 
-    # Setup is non-interactive. Resolve external Tunnel credentials only after confirming the
-    # current-user context, but before payload extraction or runtime mutation.
-    if ($InstallChannel -eq 'setup' -and $resolvedTunnelMode -eq 'named') {
-        $setupTunnelTokenState = Resolve-AvailableTunnelToken `
-            -TokenPath $tunnelTokenPath `
-            -RequestedToken $TunnelToken `
-            -TokenFile $TunnelTokenFile
-        if ([string]::IsNullOrWhiteSpace($setupTunnelTokenState.Token)) {
-            $installErrorCode = 'tunnel-token-required'
-            throw 'The saved Cloudflare Tunnel Token is missing or unreadable. Re-enter it in Setup.'
-        }
-        $TunnelToken = $setupTunnelTokenState.Token
-    }
-
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     New-Item -ItemType Directory -Path $runtimeBackupDir -Force | Out-Null
     foreach ($item in $managedRuntimeFiles) {
@@ -1325,14 +1131,7 @@ try {
     }
     $previousRunValue = Get-RunValue -RegistryPath $runKey -Name $runValueName
     $previousTrayRunValue = Get-RunValue -RegistryPath $runKey -Name $trayRunValueName
-    $previousTunnelRunValue = Get-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName
     $rollbackStateCaptured = $true
-
-    $existingTunnelMode = (Read-TextFile -Path $tunnelModePath).ToLowerInvariant()
-    $existingActiveServerUrl = Read-TextFile -Path $serverUrlPath
-    if ($existingTunnelMode -eq 'named' -and -not [string]::IsNullOrWhiteSpace($existingActiveServerUrl)) {
-        Write-TextFile -Path $namedServerUrlPath -Value $existingActiveServerUrl
-    }
 
     if (-not [string]::IsNullOrWhiteSpace($OfflineArchive)) {
         if (-not (Test-Path -LiteralPath $OfflineArchive -PathType Leaf)) {
@@ -1363,7 +1162,11 @@ try {
     if (-not (Test-Path -LiteralPath $sourceBinary -PathType Leaf)) {
         throw "Release archive does not contain agentdock.exe: $assetName"
     }
-    $sourceTrayBinary = Join-Path $extractDir 'agentdock-tray.exe'
+    $sourceTrayBinary = Join-Path $extractDir 'control-panel\agentdock-tray.exe'
+    if (-not (Test-Path -LiteralPath $sourceTrayBinary -PathType Leaf)) {
+        # Backward compatibility for older release archives that only carried the flat Tray executable.
+        $sourceTrayBinary = Join-Path $extractDir 'agentdock-tray.exe'
+    }
     $sourceTrayIcon = Join-Path $extractDir 'agentdock.ico'
     $sourceArbiter = Join-Path $extractDir 'agentdock-arbiter.exe'
     $sourceCoreShim = Join-Path $extractDir 'agentdock-shim.exe'
@@ -1660,36 +1463,7 @@ try {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
 
-    # Windows Tunnel has a long-lived supervisor that will immediately restart cloudflared after
-    # an external process kill. Stop that supervisor through the currently committed generation
-    # before replacing cloudflared or changing its protected Token. Legacy installs without a
-    # supervisor PID keep the old process-only migration path below.
-    $tunnelSupervisorPidPath = Join-Path $runtimeDir 'tunnel-supervisor.pid'
-    if ($generationLayoutDetected -and
-        (Test-Path -LiteralPath $tunnelSupervisorPidPath -PathType Leaf) -and
-        (Test-Path -LiteralPath $existingGenerationCore -PathType Leaf)) {
-        $tunnelStopOutput = @(& $existingGenerationCore tunnel stop --runtime-root $runtimeDir 2>&1)
-        if ($LASTEXITCODE -ne 0) {
-            $tunnelStopDetail = ($tunnelStopOutput | Out-String).Trim()
-            throw "Unable to stop the existing AgentDock Tunnel supervisor before update. $tunnelStopDetail"
-        }
-    }
-
-    $cloudflaredProcessWasRunning = @(Get-CloudflaredProcesses -BinaryPath $cloudflaredBinary).Count -gt 0
-    $cloudflaredStopAttempted = $true
-    [void] (Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary)
-    if (Test-Path -LiteralPath $cloudflaredBinary -PathType Leaf) {
-        Copy-Item -LiteralPath $cloudflaredBinary -Destination $cloudflaredBackup -Force
-    }
-    $cloudflaredReplacementStarted = $true
-    Install-CloudflaredBinary `
-        -DestinationBinary $cloudflaredBinary `
-        -Architecture $architecture `
-        -TempDirectory $tempRoot `
-        -SourceBinary $OfflineCloudflaredBinary
-
     $publicUrl = ''
-    $manifestPublicUrl = ''
     $engineCommitted = $false
     $enginePrepared = $false
     $engineTransactionId = ''
@@ -1719,57 +1493,6 @@ try {
         $OAuthTokenSecret = $oauthCredentials.TokenSecret
         Write-TextFile -Path $credentialOwnerSidPath -Value $taskUser.Sid
 
-        if ($resolvedTunnelMode -ne 'none') {
-            $existingServerUrl = Read-TextFile -Path $serverUrlPath
-            if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
-                $ServerUrl = [Environment]::GetEnvironmentVariable('AGENTDOCK_SERVER_URL')
-            }
-            if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
-                $ServerUrl = $existingServerUrl
-            }
-            if ($resolvedTunnelMode -eq 'named' -and [string]::IsNullOrWhiteSpace($ServerUrl)) {
-                $ServerUrl = Read-TextFile -Path $namedServerUrlPath
-            }
-            if ($resolvedTunnelMode -eq 'quick' -or $resolvedTunnelMode -eq 'tailcat') {
-                $ServerUrl = ''
-            }
-            if ($resolvedTunnelMode -eq 'named') {
-                if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
-                    $ServerUrl = Read-Host 'Fixed HTTPS public origin, for example https://agent.example.com'
-                }
-                $ServerUrl = Normalize-ServerUrl -Value $ServerUrl
-                Write-TextFile -Path $namedServerUrlPath -Value $ServerUrl
-
-                $tunnelTokenState = Resolve-AvailableTunnelToken `
-                    -TokenPath $tunnelTokenPath `
-                    -RequestedToken $TunnelToken `
-                    -TokenFile $TunnelTokenFile
-                $existingTunnelToken = $tunnelTokenState.ExistingToken
-                $TunnelToken = $tunnelTokenState.Token
-                if ([string]::IsNullOrWhiteSpace($TunnelToken)) {
-                    if ($InstallChannel -eq 'setup') {
-                        $installErrorCode = 'tunnel-token-required'
-                        throw 'The saved Cloudflare Tunnel Token is missing or unreadable. Re-enter it in Setup.'
-                    }
-                    $secureTunnelToken = Read-Host 'Cloudflare Tunnel Token' -AsSecureString
-                    $credential = New-Object System.Management.Automation.PSCredential('token', $secureTunnelToken)
-                    $TunnelToken = $credential.GetNetworkCredential().Password
-                }
-                if ([string]::IsNullOrWhiteSpace($TunnelToken)) {
-                    throw 'A fixed Cloudflare hostname requires a Tunnel Token.'
-                }
-                if (-not [string]::Equals($TunnelToken, $existingTunnelToken, [StringComparison]::Ordinal)) {
-                    Write-ProtectedText -Path $tunnelTokenPath -Value $TunnelToken -Entropy 'agentdock.cloudflare.tunnel.v1'
-                }
-            }
-            Write-TextFile -Path $serverUrlPath -Value $ServerUrl
-            Write-TextFile -Path $tunnelModePath -Value $resolvedTunnelMode
-        } else {
-            Write-TextFile -Path $serverUrlPath -Value ''
-            Write-TextFile -Path $tunnelModePath -Value 'none'
-            Remove-Item -LiteralPath $quickTunnelUrlPath -Force -ErrorAction SilentlyContinue
-        }
-
         $escapedBinaryPath = $destinationBinary.Replace("'", "''")
         $escapedRuntimeDir = $runtimeDir.Replace("'", "''")
         # Keep the compatibility launcher only for legacy updates and rollback. New startup entries use the WinExe tray proxy.
@@ -1780,11 +1503,6 @@ exit `$LASTEXITCODE
 "@
         [IO.File]::WriteAllText($launcherPath, $launcher, $Utf8NoBom)
 
-        $manifestPublicUrl = ''
-        if ($resolvedTunnelMode -eq 'named') {
-            $manifestPublicUrl = $ServerUrl
-        }
-        $publicUrl = $manifestPublicUrl
         if ($effectivePrivilegeMode -eq 'elevated') {
             Remove-ItemProperty -LiteralPath $runKey -Name $runValueName -ErrorAction SilentlyContinue
             Enable-AgentDockTask
@@ -1796,31 +1514,6 @@ exit `$LASTEXITCODE
         $trayStartupCommand = "`"$destinationTrayBinary`" --background"
         Set-RunValue -RegistryPath $runKey -Name $trayRunValueName -Value $trayStartupCommand
         $trayStartupRegistrationChanged = $true
-
-        if ($cloudflaredTunnel) {
-            # Compatibility launcher delegates to the native Tunnel supervisor.
-            # Normal startup still uses the WinExe tray proxy.
-            $cloudflaredLauncher = @"
-`$ErrorActionPreference = 'Stop'
-& '$escapedBinaryPath' tunnel launch --runtime-root '$escapedRuntimeDir'
-exit `$LASTEXITCODE
-"@
-            [IO.File]::WriteAllText($cloudflaredLauncherPath, $cloudflaredLauncher, $Utf8NoBom)
-            [IO.File]::WriteAllText($cloudflaredStdoutLogPath, '', $Utf8NoBom)
-            [IO.File]::WriteAllText($cloudflaredStderrLogPath, '', $Utf8NoBom)
-
-            $cloudflaredStartupCommand = "`"$destinationTrayBinary`" --start-tunnel --runtime-root `"$runtimeDir`""
-            Set-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName -Value $cloudflaredStartupCommand
-            $tunnelStartupRegistrationChanged = $true
-        } else {
-            Remove-ItemProperty -LiteralPath $runKey -Name $cloudflaredRunValueName -ErrorAction SilentlyContinue
-            $tunnelStartupRegistrationChanged = $true
-            if ($resolvedTunnelMode -eq 'none') {
-                Write-TextFile -Path $tunnelModePath -Value 'none'
-                Write-TextFile -Path $serverUrlPath -Value ''
-                Remove-Item -LiteralPath $quickTunnelUrlPath -Force -ErrorAction SilentlyContinue
-            }
-        }
     }
 
     # HKCU/Task (if any) are already written. Engine owns runtime.json/skills/start.
@@ -1833,13 +1526,11 @@ exit `$LASTEXITCODE
             '--payload-dir', $extractDir,
             '--host', '127.0.0.1',
             '--port', "$Port",
-            '--tunnel-mode', $resolvedTunnelMode,
             '--privilege-mode', $effectivePrivilegeMode,
             '--agentdock-home', $runtimeAgentDockHome,
             '--agentdock-default-dir', $runtimeAgentDockDefaultDir,
             '--startup-value-name', $runValueName,
             '--tray-startup-value-name', $trayRunValueName,
-            '--cloudflared-startup-value-name', $cloudflaredRunValueName,
             '--channel', $InstallChannel,
             '--defer-commit'
         )
@@ -1856,9 +1547,6 @@ exit `$LASTEXITCODE
         }
         if (-not [string]::IsNullOrWhiteSpace($coreSkillBundle)) {
             $engineArgs += @('--skill-bundle', $coreSkillBundle)
-        }
-        if (-not [string]::IsNullOrWhiteSpace($manifestPublicUrl)) {
-            $engineArgs += @('--server-url', $manifestPublicUrl)
         }
         # Engine may replace stable shim/icon before returning an error; mark this before invocation so catch can restore them.
         $stableFilesMayBeReplaced = $true
@@ -1910,13 +1598,6 @@ exit `$LASTEXITCODE
 
         if ($engineOwnsActivation -and $RegisterStartup) {
             $healthStatus = 'healthy'
-            if ($resolvedTunnelMode -eq 'quick') {
-                # Tunnel/public readiness is a soft dependency. Record a URL only if it is already
-                # available; the control panel will show eventual readiness after install/update.
-                $publicUrl = Read-TextFile -Path $quickTunnelUrlPath
-            } elseif ($resolvedTunnelMode -eq 'named') {
-                $publicUrl = $ServerUrl
-            }
         } elseif ($RegisterStartup) {
             if ($effectivePrivilegeMode -eq 'elevated') {
                 Start-AgentDockTask -AgentDockBinary $destinationBinary -ExpectedUserSid $taskUser.Sid
@@ -1934,11 +1615,6 @@ exit `$LASTEXITCODE
             Wait-AgentDockHealth -HealthPort $Port
             $healthStatus = 'healthy'
 
-            if ($resolvedTunnelMode -eq 'quick') {
-                $publicUrl = Read-TextFile -Path $quickTunnelUrlPath
-            } elseif ($resolvedTunnelMode -eq 'named') {
-                $publicUrl = $ServerUrl
-            }
         } elseif ($mustRestartExistingProcess) {
             if ($InstallChannel -eq 'setup') {
                 Invoke-SetupRuntimeProcess `
@@ -2003,45 +1679,58 @@ exit `$LASTEXITCODE
         $engineCommitted = $true
     }
 
-    # Core is authoritative for install/update success. Start Tunnel only after commit and do it
-    # asynchronously through the existing WinExe startup proxy so Cloudflare/network readiness
-    # cannot hold the transaction or its success UI open.
-    if ($RegisterStartup -and $cloudflaredTunnel) {
+    # Legacy Cloudflare parameters are forwarded to the component/tunnel CLI only after
+    # Core commit succeeds. Compatibility failure may warn but must not roll back base install.
+    if ($legacyTunnelCompatibilityRequested -and -not [string]::IsNullOrWhiteSpace($resolvedTunnelMode)) {
+        $compatibilityTokenFile = ''
         try {
-            $tunnelStartupArguments = "--start-tunnel --runtime-root `"$runtimeDir`""
-            if ($InstallChannel -eq 'setup') {
-                Invoke-SetupRuntimeProcess `
-                    -FilePath $destinationTrayBinary `
-                    -Arguments $tunnelStartupArguments
-            } else {
-                Start-Process `
-                    -FilePath $destinationTrayBinary `
-                    -ArgumentList $tunnelStartupArguments `
-                    -WindowStyle Hidden | Out-Null
+            if (-not [string]::IsNullOrWhiteSpace($OfflineCloudflaredBinary)) {
+                if (-not (Test-Path -LiteralPath $OfflineCloudflaredBinary -PathType Leaf)) {
+                    throw "Legacy OfflineCloudflaredBinary was not found: $OfflineCloudflaredBinary"
+                }
+                $componentArgs = @('component', '__import-legacy', 'cloudflared', '--runtime-root', $runtimeDir, '--source', $OfflineCloudflaredBinary, '--json')
+                & $destinationBinary @componentArgs 1>$null
+                if ($LASTEXITCODE -ne 0) { throw "cloudflared legacy component import failed with exit code $LASTEXITCODE." }
+            } elseif (@('quick', 'named') -contains $resolvedTunnelMode) {
+                $componentArgs = @('component', 'install', 'cloudflared', '--runtime-root', $runtimeDir, '--json')
+                & $destinationBinary @componentArgs 1>$null
+                if ($LASTEXITCODE -ne 0) { throw "cloudflared component install failed with exit code $LASTEXITCODE." }
+            }
+
+            $tunnelArgs = @('tunnel', 'configure', '--runtime-root', $runtimeDir, '--mode', $resolvedTunnelMode)
+            if ($resolvedTunnelMode -eq 'named') {
+                $compatibilityServerUrl = $ServerUrl
+                if ([string]::IsNullOrWhiteSpace($compatibilityServerUrl)) { $compatibilityServerUrl = [Environment]::GetEnvironmentVariable('AGENTDOCK_SERVER_URL') }
+                if (-not [string]::IsNullOrWhiteSpace($compatibilityServerUrl)) { $tunnelArgs += @('--server-url', $compatibilityServerUrl) }
+                if (-not [string]::IsNullOrWhiteSpace($TunnelTokenFile)) {
+                    $compatibilityTokenFile = $TunnelTokenFile
+                } elseif (-not [string]::IsNullOrWhiteSpace($TunnelToken)) {
+                    $compatibilityTokenFile = Join-Path $tempRoot 'legacy-tunnel-token.txt'
+                    [IO.File]::WriteAllText($compatibilityTokenFile, $TunnelToken, $Utf8NoBom)
+                }
+                if (-not [string]::IsNullOrWhiteSpace($compatibilityTokenFile)) { $tunnelArgs += @('--token-file', $compatibilityTokenFile) }
+            }
+            & $destinationBinary @tunnelArgs 1>$null
+            if ($LASTEXITCODE -ne 0) { throw "Tunnel compatibility configure failed with exit code $LASTEXITCODE." }
+            if ($DeleteTunnelTokenFile -and -not [string]::IsNullOrWhiteSpace($TunnelTokenFile)) {
+                Remove-Item -LiteralPath $TunnelTokenFile -Force -ErrorAction SilentlyContinue
             }
         } catch {
-            # Network/public readiness stays a soft dependency, but failure to schedule the local
-            # Tunnel host is actionable. Keep Core committed and surface the degraded public state.
-            $tunnelWarningMessage = 'AgentDock was installed successfully, but public access could not be started in the background. Open the control panel or sign in again to retry.'
-            if ([string]::IsNullOrWhiteSpace($installWarningMessage)) {
-                $installWarningMessage = $tunnelWarningMessage
+            if ($resolvedTunnelMode -eq 'tailcat') {
+                $tunnelWarningMessage = 'AgentDock was installed successfully, but Tailcat mode could not be configured. Open Settings > Advanced Connection and apply Tailcat again.'
             } else {
-                $installWarningMessage = ($installWarningMessage + ' ' + $tunnelWarningMessage).Trim()
+                $tunnelWarningMessage = 'AgentDock was installed successfully, but the legacy Cloudflare Tunnel compatibility request could not be completed. Open Settings > Advanced Connection to install or repair Cloudflare Tunnel.'
             }
-            if ([string]::IsNullOrWhiteSpace($installWarningCode)) {
-                $installWarningCode = 'tunnel-start-deferred'
-            } else {
-                $installWarningCode = "$installWarningCode,tunnel-start-deferred"
-            }
+            if ([string]::IsNullOrWhiteSpace($installWarningMessage)) { $installWarningMessage = $tunnelWarningMessage } else { $installWarningMessage = ($installWarningMessage + ' ' + $tunnelWarningMessage).Trim() }
+            if ([string]::IsNullOrWhiteSpace($installWarningCode)) { $installWarningCode = 'legacy-tunnel-migration-deferred' } else { $installWarningCode = "$installWarningCode,legacy-tunnel-migration-deferred" }
             Write-Warning "$tunnelWarningMessage Details: $($_.Exception.Message)"
-        }
-        if ($resolvedTunnelMode -eq 'quick') {
-            $publicUrl = Read-TextFile -Path $quickTunnelUrlPath
-        } elseif ($resolvedTunnelMode -eq 'named') {
-            $publicUrl = $ServerUrl
+        } finally {
+            $temporaryCompatibilityToken = Join-Path $tempRoot 'legacy-tunnel-token.txt'
+            if (-not [string]::IsNullOrWhiteSpace($compatibilityTokenFile) -and [string]::Equals($compatibilityTokenFile, $temporaryCompatibilityToken, [StringComparison]::OrdinalIgnoreCase)) {
+                Remove-Item -LiteralPath $compatibilityTokenFile -Force -ErrorAction SilentlyContinue
+            }
         }
     }
-
     $taskTransactionCommitted = $taskTransactionStarted
     $publicMCPUrl = ''
     if (-not [string]::IsNullOrWhiteSpace($publicUrl)) {
@@ -2067,34 +1756,15 @@ exit `$LASTEXITCODE
     if ($RegisterStartup) {
         Write-Host "Bearer Token: $AuthToken"
     }
-    if ($resolvedTunnelMode -eq 'tailcat') {
+    if ($legacyTunnelCompatibilityRequested -and @('quick', 'named') -contains $resolvedTunnelMode) {
+        Write-Host ''
+        Write-Host 'Legacy Cloudflare Tunnel parameters were handed off to the AgentDock component/tunnel lifecycle.'
+        Write-Host 'Open Settings > Advanced Connection to view component and Tunnel status.'
+    } elseif ($resolvedTunnelMode -eq 'tailcat') {
         Write-Host ''
         Write-Host 'Tailcat mode configured.'
-        Write-Host 'Open the control panel and copy the connection string and TCP port into the NexusDock node.'
+        Write-Host 'Open Settings > Advanced Connection and copy the connection string into the NexusDock node.'
         Write-Host 'This mode does not publish a public MCP address.'
-    } elseif ($resolvedTunnelMode -ne 'none') {
-        Write-Host ''
-        Write-Host 'AgentDock public access configured'
-        Write-Host "Public mode: $resolvedTunnelMode"
-        if (-not [string]::IsNullOrWhiteSpace($publicUrl)) {
-            Write-Host "Public address: $publicUrl"
-            Write-Host "MCP address: $publicUrl/mcp"
-        } else {
-            Write-Host 'Public access is starting in the background.'
-            Write-Host 'Open the AgentDock control panel to view the public address when it is ready.'
-        }
-        Write-Host "Bearer Token: $AuthToken"
-        Write-Host "OAuth login password: $OAuthPassword"
-        Write-Host 'Authentication: Bearer Token and OAuth are both enabled.'
-        Write-Host "cloudflared stdout log: $cloudflaredStdoutLogPath"
-        Write-Host "cloudflared stderr log: $cloudflaredStderrLogPath"
-        if ($resolvedTunnelMode -eq 'quick') {
-            Write-Host 'The temporary address changes after cloudflared restarts.'
-            Write-Host 'The control panel reports the current address after background startup completes.'
-        } else {
-            Write-Host 'Tunnel startup continues in the background; readiness is shown in the control panel and logs.'
-            Write-Host "Cloudflare Public Hostname service target: http://127.0.0.1:$Port"
-        }
     }
 } catch {
     $installError = $_
@@ -2121,22 +1791,9 @@ exit `$LASTEXITCODE
                 [void] (Stop-AgentDockForUpgrade -BinaryPath $destinationBinary)
             }
         }
-        if ($cloudflaredStopAttempted -or $cloudflaredReplacementStarted -or $tunnelStartupRegistrationChanged) {
-            [void] (Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary)
-        }
         if ($effectivePrivilegeMode -eq 'elevated') {
             Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
             Start-Sleep -Milliseconds 500
-        }
-
-        if ($cloudflaredReplacementStarted) {
-            $cloudflaredBackupExists = Test-Path -LiteralPath $cloudflaredBackup -PathType Leaf
-            if ($cloudflaredBackupExists) {
-                Copy-Item -LiteralPath $cloudflaredBackup -Destination $cloudflaredBinary -Force
-            }
-            if (-not $cloudflaredBackupExists) {
-                Remove-Item -LiteralPath $cloudflaredBinary -Force -ErrorAction SilentlyContinue
-            }
         }
 
         if ($stableFilesMayBeReplaced) {
@@ -2174,11 +1831,6 @@ exit `$LASTEXITCODE
                 Set-RunValue -RegistryPath $runKey -Name $trayRunValueName -Value $previousTrayRunValue
             } else {
                 Remove-ItemProperty -LiteralPath $runKey -Name $trayRunValueName -ErrorAction SilentlyContinue
-            }
-            if ($null -ne $previousTunnelRunValue) {
-                Set-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName -Value $previousTunnelRunValue
-            } else {
-                Remove-ItemProperty -LiteralPath $runKey -Name $cloudflaredRunValueName -ErrorAction SilentlyContinue
             }
         }
 
@@ -2249,33 +1901,6 @@ exit `$LASTEXITCODE
             }
         } elseif ($taskWillRestartAgentDock) {
             Wait-AgentDockHealth -HealthPort $Port
-        }
-        if ($cloudflaredProcessWasRunning) {
-            # Rollback success is anchored to the restored source Core + local health. Tunnel/public
-            # recovery is best-effort and must not turn Cloudflare/network delay into rollback_failed.
-            if (Test-Path -LiteralPath $destinationTrayBinary -PathType Leaf) {
-                try {
-                    $rollbackTunnelArguments = "--start-tunnel --runtime-root `"$runtimeDir`""
-                    if ($InstallChannel -eq 'setup') {
-                        Invoke-SetupRuntimeProcess `
-                            -FilePath $destinationTrayBinary `
-                            -Arguments $rollbackTunnelArguments
-                    } else {
-                        Start-Process `
-                            -FilePath $destinationTrayBinary `
-                            -ArgumentList $rollbackTunnelArguments `
-                            -WindowStyle Hidden | Out-Null
-                    }
-                } catch {
-                    # Tunnel diagnostics remain available through panel/runtime logs.
-                }
-            } elseif (Test-Path -LiteralPath $cloudflaredLauncherPath -PathType Leaf) {
-                try {
-                    Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath
-                } catch {
-                    # Legacy launcher recovery is also a soft dependency.
-                }
-            }
         }
         if ($trayProcessWasRunning -and (Test-Path -LiteralPath $destinationTrayBinary -PathType Leaf)) {
             Start-AgentDockTray -BinaryPath $destinationTrayBinary

@@ -81,8 +81,9 @@ struct ServiceControllerValidationTests {
 
         for (rawMode, expected) in [
             ("none", TunnelMode.local),
-            ("quick", TunnelMode.tailcat),
+            ("quick", TunnelMode.quick),
             ("tailcat", TunnelMode.tailcat),
+            ("lan", TunnelMode.lan),
             ("named", TunnelMode.named),
             ("unexpected", TunnelMode.local),
         ] {

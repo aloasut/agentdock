@@ -59,21 +59,37 @@ func TestWindowsTunnelLifecycleTestsIsolateAgentDockHome(t *testing.T) {
 	}
 }
 
-func TestDesktopControlSurfacesExposeTailcat(t *testing.T) {
+func TestDesktopControlSurfacesKeepQuickTunnelAndTailcatSeparate(t *testing.T) {
 	checks := map[string][]string{
-		filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"): {
-			"ResetTailcatButton_Click",
-			"TailcatModeRadio",
+		filepath.Join("..", "..", "desktop", "windows", "winui", "SettingsPage.xaml.cs"): {
+			"TemporaryTunnelButton_Click",
+			"RegenerateQuickTunnelAsync",
+			`SetTunnelModeAsync("quick", "", "")`,
+			"BuildTailcatAccessSection()",
+			"await RefreshAsync()",
 		},
-		filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"): {
+		filepath.Join("..", "..", "desktop", "windows", "winui", "TailcatAccessSection.cs"): {
+			"ResetTailcatButton_Click",
 			"ResetTailcatConnectionAsync",
+			`SetTunnelModeAsync("tailcat", "", "", port, allowText, true)`,
+		},
+		filepath.Join("..", "..", "desktop", "windows", "shared", "Services", "RuntimeService.cs"): {
+			"ResetTailcatConnectionAsync",
+			"RegenerateQuickTunnelAsync",
 			"--tailcat-port",
 			"--tailcat-allow-set",
 		},
-		filepath.Join("..", "..", "desktop", "macos", "AgentDockApp", "Sources", "SetupWindowController.swift"): {
+		filepath.Join("..", "..", "desktop", "macos", "AgentDockApp", "Sources", "NativeControlPanelWindowController.swift"): {
+			`if model.cloudflaredComponent.ready {`,
+			`L10n.text("Regenerate temporary address")`,
+			`await model.applyTunnel(mode: .quick, serverURL: "", tunnelToken: "")`,
+			"TailcatAccessSection(model: model)",
+		},
+		filepath.Join("..", "..", "desktop", "macos", "AgentDockApp", "Sources", "TailcatAccessSection.swift"): {
 			`L10n.text("Tailcat")`,
 			`L10n.text("Reset connection string")`,
-			"regenerateTailcat",
+			"resetTailcatConnection",
+			"applyTailcat",
 		},
 	}
 	for path, required := range checks {

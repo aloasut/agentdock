@@ -86,12 +86,21 @@ func TestWindowsInstallerWorkflowHasAlwaysPresentPullRequestGate(t *testing.T) {
 		"VALIDATE_RESULT: ${{ needs.validate.result }}",
 		"github.event_name == 'workflow_dispatch' && inputs.test_tag != ''",
 		"-InstallerPath .\\scripts\\install\\install.ps1",
-		"name: Download and verify cloudflared compatibility payload",
+		"name: Test cloudflared component lifecycle",
 		"for ($attempt = 1; $attempt -le 5; $attempt++)",
 		"Get-AuthenticodeSignature -LiteralPath $cloudflaredPath",
+		".\\packaging\\components\\cloudflared.json",
+		"cloudflared pinned SHA-256 mismatch",
+		".\\scripts\\test\\test-windows-cloudflared-component.ps1",
+		"-SignedCloudflaredBinary $cloudflaredPath",
+		"-ArtifactUrl $cloudflaredUrl",
+		"-ExpectedDigest $expectedDigest",
 		"cmd/agentdock-wsl-helper",
 		"internal/wslfilehelper",
 		"scripts/test/testdata/fake-cloudflared",
+		"packaging/components",
+		"internal/component",
+		"tools/release",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("Windows Installer workflow must keep a safe pull-request gate; missing %q", want)
@@ -99,6 +108,12 @@ func TestWindowsInstallerWorkflowHasAlwaysPresentPullRequestGate(t *testing.T) {
 	}
 	if strings.Contains(workflow, "raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/scripts/install/install.ps1") {
 		t.Fatal("routine Windows installer validation must use the checked-out installer instead of refetching it over the network")
+	}
+	if strings.Contains(workflow, "cloudflared/releases/latest") {
+		t.Fatal("Windows Installer validation must pin the cloudflared component version instead of downloading upstream latest")
+	}
+	if strings.Contains(workflow, "AMD64_CLOUDFLARED") || strings.Contains(workflow, "-CloudflaredBinary $env:") {
+		t.Fatal("Windows Setup build must not carry cloudflared as an installer payload")
 	}
 }
 
@@ -167,7 +182,7 @@ func TestReleaseWorkflowPublishesDraftByReleaseID(t *testing.T) {
 }
 
 func TestWindowsTrayCarriesSignPathMetadataFromMSBuild(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "AgentDock.ControlPanel.csproj"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "winui", "AgentDock.WinUI.csproj"))
 	if err != nil {
 		t.Fatalf("read Windows control panel project: %v", err)
 	}
@@ -210,10 +225,25 @@ func TestWindowsVersionInfoScriptCoversSignPathMetadata(t *testing.T) {
 		"'agentdock-arbiter.exe'",
 		"'agentdock-shim.exe'",
 		"'agentdock-tray-shim.exe'",
+		"RT_GROUP_ICON",
+		"assets\\agentdock.ico",
 		"VersionInfo must be applied before Authenticode signing",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("Windows VersionInfo script must enforce SignPath metadata; missing %q", want)
+		}
+	}
+}
+
+func TestWindowsInstallerEmbedsBrandIconIntoStableTrayShim(t *testing.T) {
+	workflow := readWorkflow(t, "windows-installer.yml")
+	for _, want := range []string{
+		"-Path (Join-Path $distRoot 'agentdock-tray-shim.exe')",
+		"-Path .\\dist\\agentdock-tray-shim.exe",
+		"-Path (Join-Path $arm64Dir 'agentdock-tray-shim.exe')",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("Windows installer workflow must brand the stable Tray shim before packaging: %q", want)
 		}
 	}
 }

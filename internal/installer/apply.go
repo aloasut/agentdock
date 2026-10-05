@@ -478,7 +478,6 @@ func activateWindows(ctx context.Context, request Request, staged stagedInstall)
 	taskName := request.TaskName
 	startupValueName := request.StartupValueName
 	trayStartupValueName := request.TrayStartupValueName
-	cloudflaredStartupValueName := request.CloudflaredStartupValueName
 	channel := request.Channel
 	// repair / 省略标志时必须保留已有 runtime.json，不能把 host/port/tunnel 重置成默认值。
 	if existing, err := desktopruntime.Load(filepath.Join(request.InstallRoot, "runtime.json")); err == nil {
@@ -512,9 +511,6 @@ func activateWindows(ctx context.Context, request Request, staged stagedInstall)
 		if trayStartupValueName == "" {
 			trayStartupValueName = existing.TrayStartupValueName
 		}
-		if cloudflaredStartupValueName == "" {
-			cloudflaredStartupValueName = existing.CloudflaredStartupValueName
-		}
 		if channel == "" {
 			channel = existing.InstallChannel
 		}
@@ -530,7 +526,6 @@ func activateWindows(ctx context.Context, request Request, staged stagedInstall)
 	}
 	startupValueName = defaultString(startupValueName, "AgentDock")
 	trayStartupValueName = defaultString(trayStartupValueName, "AgentDockTray")
-	cloudflaredStartupValueName = defaultString(cloudflaredStartupValueName, "AgentDockCloudflared")
 	if host == "" {
 		host = "127.0.0.1"
 	}
@@ -581,26 +576,23 @@ func activateWindows(ctx context.Context, request Request, staged stagedInstall)
 	}
 
 	manifest := desktopruntime.Manifest{
-		SchemaVersion:               1,
-		InstallRoot:                 request.InstallRoot,
-		AgentDockHome:               home,
-		AgentDockDefaultDir:         defaultDir,
-		AgentDockBinary:             layout.CoreShim(),
-		TrayBinary:                  layout.TrayShim(),
-		AgentDockLauncher:           filepath.Join(request.InstallRoot, "start-agentdock.ps1"),
-		AgentDockTaskName:           taskName,
-		PrivilegeMode:               privilege,
-		CloudflaredBinary:           filepath.Join(binDir, "cloudflared.exe"),
-		CloudflaredLauncher:         filepath.Join(request.InstallRoot, "start-cloudflared.ps1"),
-		StartupValueName:            startupValueName,
-		TrayStartupValueName:        trayStartupValueName,
-		CloudflaredStartupValueName: cloudflaredStartupValueName,
-		Host:                        host,
-		Port:                        port,
-		LocalMCPURL:                 localMCPURL(host, port),
-		TunnelMode:                  tunnelMode,
-		PublicURL:                   publicURL,
-		InstallChannel:              channel,
+		SchemaVersion:        1,
+		InstallRoot:          request.InstallRoot,
+		AgentDockHome:        home,
+		AgentDockDefaultDir:  defaultDir,
+		AgentDockBinary:      layout.CoreShim(),
+		TrayBinary:           layout.TrayShim(),
+		AgentDockLauncher:    filepath.Join(request.InstallRoot, "start-agentdock.ps1"),
+		AgentDockTaskName:    taskName,
+		PrivilegeMode:        privilege,
+		StartupValueName:     startupValueName,
+		TrayStartupValueName: trayStartupValueName,
+		Host:                 host,
+		Port:                 port,
+		LocalMCPURL:          localMCPURL(host, port),
+		TunnelMode:           tunnelMode,
+		PublicURL:            publicURL,
+		InstallChannel:       channel,
 	}
 	if err := desktopruntime.Save(filepath.Join(request.InstallRoot, "runtime.json"), manifest); err != nil {
 		return activatedInstall{}, err
@@ -682,7 +674,6 @@ func repairWindowsRestageRequired(request Request) bool {
 func copyWindowsGenerationPayload(payload, staging string) error {
 	copies := []struct{ src, dst string }{
 		{filepath.Join(payload, "agentdock.exe"), filepath.Join(staging, updateengine.GenerationCoreName)},
-		{filepath.Join(payload, "agentdock-tray.exe"), filepath.Join(staging, updateengine.GenerationTrayName)},
 		{filepath.Join(payload, "agentdock-arbiter.exe"), filepath.Join(staging, updateengine.GenerationArbiterName)},
 	}
 	for _, item := range copies {
@@ -693,6 +684,30 @@ func copyWindowsGenerationPayload(payload, staging string) error {
 			return err
 		}
 	}
+
+	// New WinUI packages carry the complete self-contained control-panel publish directory.
+	// Copy its contents into the generation root so agentdock-tray.exe can resolve the
+	// Windows App SDK/.NET companion files beside it. Keep the legacy flat executable as a
+	// fallback so older release archives can still be migrated and repaired.
+	controlPanelSrc := filepath.Join(payload, "control-panel")
+	if dirExists(controlPanelSrc) {
+		controlPanelTray := filepath.Join(controlPanelSrc, updateengine.GenerationTrayName)
+		if !fileExists(controlPanelTray) {
+			return fmt.Errorf("payload control-panel 缺少 %s", updateengine.GenerationTrayName)
+		}
+		if err := copyTree(controlPanelSrc, staging, 0o755); err != nil {
+			return err
+		}
+	} else {
+		traySrc := filepath.Join(payload, "agentdock-tray.exe")
+		if !fileExists(traySrc) {
+			return fmt.Errorf("payload 缺少 %s", filepath.Base(traySrc))
+		}
+		if err := copyTree(traySrc, filepath.Join(staging, updateengine.GenerationTrayName), 0o755); err != nil {
+			return err
+		}
+	}
+
 	skillsSrc := filepath.Join(payload, "share", "agentdock", "core-skills")
 	if dirExists(skillsSrc) {
 		if err := copyTree(skillsSrc, filepath.Join(staging, "core-skills"), 0o644); err != nil {

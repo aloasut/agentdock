@@ -38,13 +38,6 @@ scripts:
     deletable: false
     notes: Setup RedirectionGuard 进程树到当前用户 interactive session 的内部薄 broker；通过原生 service task-start 选择 RunEx session。
 
-  - path: scripts/install/probe-protected-text.ps1
-    class: runtime-adapter
-    owner: installer
-    public_contract: false
-    deletable: false
-    notes: Windows Setup 的只读 DPAPI 可用性探针；只返回状态码，不输出凭据明文。
-
   - path: scripts/test/check-scripts.sh
     class: test
     owner: ci
@@ -132,6 +125,13 @@ scripts:
     public_contract: false
     deletable: false
 
+  - path: scripts/test/test-windows-cloudflared-component.ps1
+    class: test
+    owner: installer
+    public_contract: false
+    deletable: false
+    notes: Windows cloudflared component 独立生命周期，覆盖固定 catalog、Authenticode、repair、update、uninstall 与 legacy import。
+
   - path: scripts/test/test-windows-quick-tunnel-lifecycle.ps1
     class: test
     owner: installer
@@ -188,9 +188,15 @@ scripts:
     legacy_oversize: true
     oversize_justification: macOS App/DMG 构建。签名和 bundle 布局必须用平台工具；版本与 checksum 归 tools/release。
 
-  - path: packaging/windows/build-windows-offline-setup.ps1
+  - path: packaging/windows/build-windows-setup.ps1
     class: packaging
     owner: release
+    public_contract: false
+    deletable: false
+
+  - path: packaging/windows/ensure-windows-runtimes.ps1
+    class: packaging
+    owner: installer
     public_contract: false
     deletable: false
 

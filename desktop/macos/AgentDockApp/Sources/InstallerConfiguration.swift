@@ -4,6 +4,7 @@ enum TunnelMode: String, CaseIterable {
     case local = "none"
     case lan
     case tailcat
+    case quick
     case named
 
     var title: String {
@@ -11,6 +12,7 @@ enum TunnelMode: String, CaseIterable {
         case .local: return L10n.text("Local only")
         case .lan: return L10n.text("LAN")
         case .tailcat: return L10n.text("Tailcat")
+        case .quick: return L10n.text("Temporary public address")
         case .named: return L10n.text("Use your own Cloudflare domain")
         }
     }
@@ -23,6 +25,8 @@ enum TunnelMode: String, CaseIterable {
             return L10n.text("Let other devices on this machine's network reach AgentDock directly. Multiple network segments are served at once; access requires the Bearer token or OAuth. Cloudflare public access stays disabled.")
         case .tailcat:
             return L10n.text("Run a Tailcat server on this computer. Copy the connection string and TCP port into the NexusDock node. NexusDock dials in. This does not publish a public MCP address.")
+        case .quick:
+            return L10n.text("Generate a temporary public address without configuring a domain.")
         case .named:
             return L10n.text("Use your own HTTPS domain through Cloudflare Tunnel. Once configured, the public address remains stable.")
         }

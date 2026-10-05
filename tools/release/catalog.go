@@ -64,6 +64,11 @@ func ReleaseCatalog() []Artifact {
 		{Name: "AgentDockSetup-amd64.exe", Kind: "setup", Platform: "windows", Arch: "amd64", Required: true, PublicContract: true},
 		{Name: "AgentDockSetup-arm64.exe", Kind: "setup", Platform: "windows", Arch: "arm64", Required: true, PublicContract: true},
 	}
+	components := []Artifact{
+		// 第三方 cloudflared 由客户端直接从 Cloudflare 固定 Release 获取；
+		// AgentDock Release/R2 只发布第一方 catalog metadata。
+		{Name: "agentdock-component-catalog.json", Kind: "component-catalog", Required: true},
+	}
 	scripts := []Artifact{
 		{Name: "install.sh", Kind: "bootstrap", Platform: "unix", PublicContract: true, Required: true},
 		{Name: "install.ps1", Kind: "bootstrap", Platform: "windows", PublicContract: true, Required: true},
@@ -71,6 +76,16 @@ func ReleaseCatalog() []Artifact {
 	var catalog []Artifact
 	catalog = append(catalog, archives...)
 	for _, artifact := range archives {
+		catalog = append(catalog, Artifact{
+			Name:     artifact.Name + ".sha256",
+			Kind:     "checksum",
+			Platform: artifact.Platform,
+			Arch:     artifact.Arch,
+			Required: artifact.Required,
+		})
+	}
+	catalog = append(catalog, components...)
+	for _, artifact := range components {
 		catalog = append(catalog, Artifact{
 			Name:     artifact.Name + ".sha256",
 			Kind:     "checksum",

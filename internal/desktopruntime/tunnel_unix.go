@@ -42,14 +42,25 @@ func tunnelMode(values map[string]string) string {
 func platformTunnelStatus(ctx context.Context, runtimeRoot string) (TunnelStatus, error) {
 	manifest, root, values, err := loadTunnelEnvironment(runtimeRoot)
 	if errors.Is(err, os.ErrNotExist) {
-		return TunnelStatus{Mode: "none"}, nil
+		_, dependencyState, componentVersion := unixCloudflaredComponentStatus(runtimeRoot, manifest)
+		return TunnelStatus{
+			Mode:             "none",
+			Ready:            true,
+			DependencyState:  dependencyState,
+			ComponentVersion: componentVersion,
+		}, nil
 	}
 	if err != nil {
 		return TunnelStatus{}, err
 	}
 	mode := tunnelMode(values)
+	// Tailcat 由核心进程提供拨入，不读取 cloudflared 组件状态。
 	if mode == "tailcat" {
 		return tailcatTunnelStatus(root), nil
+	}
+	componentPath, dependencyState, componentVersion := unixCloudflaredComponentStatus(runtimeRoot, manifest)
+	if componentPath != "" {
+		manifest.CloudflaredBinary = componentPath
 	}
 	running := tunnelServiceActive(ctx, manifest)
 	publicURL := ""
@@ -62,12 +73,20 @@ func platformTunnelStatus(ctx context.Context, runtimeRoot string) (TunnelStatus
 			publicURL = strings.TrimSpace(core["AGENTDOCK_SERVER_URL"])
 		}
 	}
+	ready := mode == "none"
+	if mode == "quick" {
+		ready = dependencyState != "not_installed" && dependencyState != "broken" && running && publicURL != ""
+	} else if mode == "named" {
+		ready = dependencyState != "not_installed" && dependencyState != "broken" && running
+	}
 	return TunnelStatus{
-		Mode:           mode,
-		Running:        running,
-		Ready:          running && (mode == "named" || publicURL != ""),
-		StartupEnabled: tunnelServiceEnabled(ctx, manifest),
-		PublicURL:      publicURL,
+		Mode:             mode,
+		Running:          running,
+		Ready:            ready,
+		StartupEnabled:   tunnelServiceEnabled(ctx, manifest),
+		PublicURL:        publicURL,
+		DependencyState:  dependencyState,
+		ComponentVersion: componentVersion,
 	}, nil
 }
 
@@ -106,8 +125,16 @@ func platformConfigureTunnel(ctx context.Context, request TunnelConfigureRequest
 	if err != nil {
 		return err
 	}
-	if err := tunnelServiceAction(ctx, manifest, "stop"); err != nil && !strings.Contains(err.Error(), "not loaded") {
-		return err
+	if request.Mode != "none" && request.Mode != "tailcat" {
+		// Tailcat 不使用 cloudflared。缺组件不能挡住拨入配置；none 仍是无需依赖的恢复路径。
+		if err := prepareUnixCloudflared(ctx, request.RuntimeRoot, &manifest); err != nil {
+			return err
+		}
+	}
+	if manifest.ServiceManager != "smappservice" {
+		if err := tunnelServiceAction(ctx, manifest, "stop"); err != nil && !strings.Contains(err.Error(), "not loaded") {
+			return err
+		}
 	}
 
 	mode := request.Mode
@@ -129,8 +156,19 @@ func platformConfigureTunnel(ctx context.Context, request TunnelConfigureRequest
 			return err
 		}
 	case "named":
-		origin, err := normalizeHTTPSOrigin(request.ServerURL)
+		candidate := strings.TrimSpace(request.ServerURL)
+		if candidate == "" {
+			data, readErr := os.ReadFile(filepath.Join(root, "named-server-url.txt"))
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				return readErr
+			}
+			candidate = strings.TrimSpace(string(data))
+		}
+		origin, err := normalizeHTTPSOrigin(candidate)
 		if err != nil {
+			return err
+		}
+		if err := atomicfile.Write(filepath.Join(root, "named-server-url.txt"), []byte(origin+"\n"), 0o600); err != nil {
 			return err
 		}
 		token, err := configuredTunnelToken(root, request.TokenFile)
@@ -154,7 +192,11 @@ func platformConfigureTunnel(ctx context.Context, request TunnelConfigureRequest
 	if err := platformServiceAction(ctx, request.RuntimeRoot, "restart"); err != nil {
 		return err
 	}
-	// Tailcat 由核心进程监听，不再拉起 cloudflared。macOS 的开机注册由 App 自己关掉。
+	if manifest.ServiceManager == "smappservice" {
+		// macOS App 自己注册 SMAppService。Go 运行时只写配置并重启 Core。
+		return nil
+	}
+	// Tailcat 由核心进程监听，不拉起 cloudflared。
 	if mode != "none" && mode != "tailcat" {
 		return tunnelServiceAction(ctx, manifest, "start")
 	}
@@ -218,6 +260,12 @@ func platformLaunchTunnel(ctx context.Context, runtimeRoot string) error {
 		stdout, stderr = logs.stdout, logs.stderr
 	}
 	mode := tunnelMode(values)
+	if mode == "none" {
+		return nil
+	}
+	if err := prepareUnixCloudflared(ctx, runtimeRoot, &manifest); err != nil {
+		return err
+	}
 	switch mode {
 	case "tailcat":
 		// Tailcat 跑在核心进程里。误启动的 tunnel agent 直接退出，避免再拉起 cloudflared。
@@ -246,7 +294,7 @@ func platformLaunchTunnel(ctx context.Context, runtimeRoot string) error {
 		command.Stderr = stderr
 		return command.Run()
 	default:
-		return errors.New("Tunnel 模式为 none")
+		return nil
 	}
 }
 

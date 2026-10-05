@@ -13,7 +13,7 @@ require (
 	github.com/rogpeppe/go-internal v1.15.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/tailscale/tailcat v0.7.0
-	github.com/uvwt/agentdock-protocol v0.8.2-0.20260929005641-178b21b7f423
+	github.com/uvwt/agentdock-protocol v0.8.2-0.20261004051622-257c54fb223b
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0
 	golang.org/x/oauth2 v0.36.0

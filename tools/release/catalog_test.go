@@ -83,3 +83,47 @@ func TestVerifyVersionMatchesBuildInfo(t *testing.T) {
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestCloudflaredComponentCatalogUsesPinnedOfficialMetadata(t *testing.T) {
+	metadata, err := loadPinnedCloudflaredMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	if err := writeCloudflaredComponentCatalog(&output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, want := range []string{
+		`"schema_version": 1`,
+		`"version": "` + metadata.Version + `"`,
+		`"upstream_source": "https://github.com/cloudflare/cloudflared/releases/tag/` + metadata.Version + `"`,
+		`"format": "binary"`,
+		`"format": "tgz"`,
+		`https://github.com/cloudflare/cloudflared/releases/download/` + metadata.Version + `/cloudflared-windows-amd64.exe`,
+		`https://github.com/cloudflare/cloudflared/releases/download/` + metadata.Version + `/cloudflared-darwin-arm64.tgz`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("catalog missing %q: %s", want, text)
+		}
+	}
+	for _, forbidden := range []string{
+		"github.com/uvwt/agentdock/releases",
+		"download.nexusdock.co",
+		"/latest/",
+		"cloudflared_darwin_",
+		"cloudflared_windows_amd64.exe",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("catalog must not rehost cloudflared; found %q in %s", forbidden, text)
+		}
+	}
+}
+
+func TestReleaseCatalogDoesNotRequireCloudflaredBinary(t *testing.T) {
+	for _, artifact := range ReleaseCatalog() {
+		if strings.HasPrefix(artifact.Name, "cloudflared_") || strings.HasPrefix(artifact.Name, "cloudflared-") {
+			t.Fatalf("AgentDock Release must not contain cloudflared binary: %+v", artifact)
+		}
+	}
+}

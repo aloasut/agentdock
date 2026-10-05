@@ -526,9 +526,13 @@ func TestWindowsGenerationLayoutAndManifest(t *testing.T) {
 		t.Fatalf("standard install leaked scheduled task name: %q", manifest.AgentDockTaskName)
 	}
 	if manifest.StartupValueName != "AgentDockE2E" ||
-		manifest.TrayStartupValueName != "AgentDockTrayE2E" ||
-		manifest.CloudflaredStartupValueName != "AgentDockCloudflaredE2E" {
+		manifest.TrayStartupValueName != "AgentDockTrayE2E" {
 		t.Fatalf("custom Windows startup identity was not preserved: %+v", manifest)
+	}
+	if manifest.CloudflaredBinary != "" ||
+		manifest.CloudflaredLauncher != "" ||
+		manifest.CloudflaredStartupValueName != "" {
+		t.Fatalf("base installer must not persist cloudflared lifecycle fields: %+v", manifest)
 	}
 	store, err := updateengine.NewStore(request.InstallRoot)
 	if err != nil {
@@ -577,9 +581,13 @@ func TestWindowsGenerationLayoutAndManifest(t *testing.T) {
 		t.Fatalf("standard repair restored a scheduled task identity: task=%q privilege=%q", manifest.AgentDockTaskName, manifest.PrivilegeMode)
 	}
 	if manifest.StartupValueName != "AgentDockE2E" ||
-		manifest.TrayStartupValueName != "AgentDockTrayE2E" ||
-		manifest.CloudflaredStartupValueName != "AgentDockCloudflaredE2E" {
+		manifest.TrayStartupValueName != "AgentDockTrayE2E" {
 		t.Fatalf("repair lost custom Windows startup identity: %+v", manifest)
+	}
+	if manifest.CloudflaredBinary != "" ||
+		manifest.CloudflaredLauncher != "" ||
+		manifest.CloudflaredStartupValueName != "" {
+		t.Fatalf("repair must not restore legacy cloudflared lifecycle fields: %+v", manifest)
 	}
 }
 
@@ -2415,6 +2423,51 @@ func TestInstallAbandonKeepsPreparedLegacySkillRootsForOldBinary(t *testing.T) {
 			t.Fatalf("installer rollback lost pending migration path %s: %v", current, err)
 		}
 	}
+}
+
+func TestCopyWindowsGenerationPayloadIncludesSelfContainedControlPanel(t *testing.T) {
+	root := t.TempDir()
+	payload := filepath.Join(root, "payload")
+	staging := filepath.Join(root, "staging")
+	controlPanel := filepath.Join(payload, "control-panel")
+	if err := os.MkdirAll(controlPanel, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		filepath.Join(payload, "agentdock.exe"):                          "core",
+		filepath.Join(payload, "agentdock-arbiter.exe"):                  "arbiter",
+		filepath.Join(payload, "agentdock-tray.exe"):                     "legacy-flat-tray",
+		filepath.Join(controlPanel, "agentdock-tray.exe"):                "winui-tray",
+		filepath.Join(controlPanel, "Microsoft.WindowsAppRuntime.dll"):   "windows-app-runtime",
+		filepath.Join(controlPanel, "agentdock-tray.runtimeconfig.json"): "{}",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := copyWindowsGenerationPayload(payload, staging); err != nil {
+		t.Fatal(err)
+	}
+
+	assertBody := func(path, want string) {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != want {
+			t.Fatalf("%s body=%q, want %q", path, string(data), want)
+		}
+	}
+	assertBody(filepath.Join(staging, updateengine.GenerationCoreName), "core")
+	assertBody(filepath.Join(staging, updateengine.GenerationArbiterName), "arbiter")
+	assertBody(filepath.Join(staging, updateengine.GenerationTrayName), "winui-tray")
+	assertBody(filepath.Join(staging, "Microsoft.WindowsAppRuntime.dll"), "windows-app-runtime")
+	assertBody(filepath.Join(staging, "agentdock-tray.runtimeconfig.json"), "{}")
 }
 
 const legacyMigrationPendingFileForInstallerTest = "skill-model-pending.json"

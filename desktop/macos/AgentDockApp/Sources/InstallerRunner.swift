@@ -83,7 +83,7 @@ final class InstallerRunner {
             }
 
             try await service.start()
-            if request.mode == .named {
+            if request.mode == .named || request.mode == .quick {
                 do {
                     try service.setTunnelEnabled(true)
                 } catch {
@@ -95,8 +95,8 @@ final class InstallerRunner {
 
             let publicURL: String
             switch request.mode {
-            case .local, .lan, .tailcat:
-                // Tailcat 不发布公网 MCP 地址。连接串留在 tailcat-status.json，由控制面单独展示。
+            case .local, .lan, .tailcat, .quick:
+                // Tailcat 不发布公网 MCP 地址。quick 的临时地址由 cloudflared 稍后写出。
                 publicURL = ""
             case .named:
                 publicURL = serverURL ?? ""
@@ -208,6 +208,10 @@ final class InstallerRunner {
             if let tailcat {
                 tailcatConfig = try TailcatPanel.configData(port: tailcat.port, allow: tailcat.allow)
             }
+        case .quick:
+            // quick 仍是 Cloudflare 临时地址，安装时不写公网 URL，OAuth 必须打开。
+            values.removeValue(forKey: "AGENTDOCK_SERVER_URL")
+            values["AGENTDOCK_OAUTH_ENABLED"] = "true"
         case .named:
             guard let serverURL else {
                 throw ValidationError(L10n.text("Custom domain mode is missing an HTTPS public address."))
@@ -249,7 +253,6 @@ final class InstallerRunner {
     private func validateBundledRuntime() throws {
         for (url, title) in [
             (paths.binary, "AgentDock Core"),
-            (paths.cloudflared, "cloudflared"),
         ] {
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
             guard values.isRegularFile == true,
@@ -268,10 +271,6 @@ final class InstallerRunner {
         guard version.status == 0,
               AppVersion.matchesCoreVersion(version.output) else {
             throw ValidationError(L10n.text("The Core bundled in AgentDock.app does not match the app version. Reinstall the application."))
-        }
-        let cloudflared = try runProcess(executable: paths.cloudflared.path, arguments: ["--version"])
-        guard cloudflared.status == 0 else {
-            throw ValidationError(L10n.text("The cloudflared bundled in AgentDock.app cannot run."))
         }
     }
 

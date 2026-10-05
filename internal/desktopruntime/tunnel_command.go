@@ -17,15 +17,22 @@ import (
 // TunnelStatus 是桌面端和 CLI 共享的结构化 Tunnel 状态。
 // TailcatAddress 是连接串，只出现在本机控制面的这次输出里，调用方不能再写进日志。
 type TunnelStatus struct {
-	Mode           string   `json:"mode"`
-	Running        bool     `json:"running"`
-	Ready          bool     `json:"ready"`
-	StartupEnabled bool     `json:"startup_enabled"`
-	PublicURL      string   `json:"public_url,omitempty"`
-	TailcatPort    int      `json:"tailcat_port,omitempty"`
-	TailcatAddress string   `json:"tailcat_address,omitempty"`
-	TailcatAllow   []string `json:"tailcat_allow,omitempty"`
-	TailcatError   string   `json:"tailcat_error,omitempty"`
+	Mode             string   `json:"mode"`
+	Running          bool     `json:"running"`
+	Ready            bool     `json:"ready"`
+	StartupEnabled   bool     `json:"startup_enabled"`
+	PublicURL        string   `json:"public_url,omitempty"`
+	DependencyState  string   `json:"dependency_state,omitempty"`
+	ComponentVersion string   `json:"component_version,omitempty"`
+	TailcatPort      int      `json:"tailcat_port,omitempty"`
+	TailcatAddress   string   `json:"tailcat_address,omitempty"`
+	TailcatAllow     []string `json:"tailcat_allow,omitempty"`
+	TailcatError     string   `json:"tailcat_error,omitempty"`
+}
+
+// TunnelStatusForRuntime 返回与 CLI 相同的本机快照，不下载组件，也不改 Tunnel 配置。
+func TunnelStatusForRuntime(ctx context.Context, runtimeRoot string) (TunnelStatus, error) {
+	return platformTunnelStatus(ctx, runtimeRoot)
 }
 
 type TunnelConfigureRequest struct {

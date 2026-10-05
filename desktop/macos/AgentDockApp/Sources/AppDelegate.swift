@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isCheckingForUpdate = false
     private var trayServiceActionInProgress = false
     private lazy var updateProgressWindow = UpdateProgressWindowController()
-    private lazy var setupWindow = SetupWindowController(
+    private lazy var setupWindow = NativeControlPanelWindowController(
         service: service,
         menuLoginAgent: menuLoginAgent,
         onChanged: { [weak self] in
@@ -132,6 +132,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let serviceState = try DesktopUpdateServiceState.load(from: service.paths.updateServiceState) else {
                     throw ValidationError(L10n.text("AgentDock update is missing background service recovery state."))
                 }
+
+                // Transitional safety for the first release that removes bundled cloudflared:
+                // the source updater may predate the component store. During the target trial the
+                // old App is still preserved in the rollback slot, so import its signed helper
+                // before Tunnel registration is restored or the Arbiter is allowed to commit.
+                let configuredMode = (try? service.configuredTunnelMode()) ?? .local
+                // Tailcat 和 LAN 不依赖 cloudflared。缺组件不能挡住这两类配置的更新。
+                let needsCloudflared = configuredMode == .quick || configuredMode == .named
+                try await service.migrateLegacyCloudflaredIfNeeded(
+                    source: DesktopUpdateTransactionRecovery.legacyCloudflaredRollbackSource(paths: service.paths),
+                    required: needsCloudflared || serviceState.tunnelEnabled
+                )
 
                 // Restore Bundle-owned SMAppService definitions first. requiresApproval is an
                 // explicit policy state and is reported to the Arbiter instead of failing the App.
@@ -404,8 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.autosaveName = "AgentDockMenuBarItem"
             item.isVisible = true
             if let button = item.button {
-                button.image = NSImage(systemSymbolName: "shippingbox.fill", accessibilityDescription: "AgentDock")
-                button.image?.isTemplate = true
+                button.image = AgentDockLogoArtwork.menuBarImage()
             }
             statusItem = item
             return
@@ -507,7 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item(L10n.text("Check for updates…"), #selector(updateService)))
             menu.addItem(.separator())
             if currentStatus.loaded {
-                menu.addItem(item(L10n.text("Open runtime analytics"), #selector(openRuntimeAnalytics)))
+                menu.addItem(item(L10n.text("View activity"), #selector(showActivity)))
             }
             menu.addItem(item(L10n.text("Open logs folder"), #selector(openLogs)))
             menu.addItem(item(L10n.text("Open configuration folder"), #selector(openConfiguration)))
@@ -527,15 +538,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showSetup() { setupWindow.present(status: currentStatus) }
     @objc private func showUpdateProgress() { updateProgressWindow.present() }
     @objc private func openPermissions() { setupWindow.presentPermissions() }
-    @objc private func openRuntimeAnalytics() {
-        service.openRuntimeAnalytics(configuration: currentStatus.configuration)
-    }
+    @objc private func showActivity() { setupWindow.presentActivity(status: currentStatus) }
     @objc private func openLogs() { service.openLogs() }
     @objc private func openConfiguration() { service.openConfiguration() }
     @objc private func openBackgroundSettings() { service.openBackgroundItemsSettings() }
 
     @objc private func openDocumentation() {
-        if let url = URL(string: "https://uvwt.github.io/agentdock-docs/") {
+        if let url = URL(string: "https://docs.nexusdock.co/agentdock/") {
             NSWorkspace.shared.open(url)
         }
     }

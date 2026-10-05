@@ -34,12 +34,16 @@ func platformLaunchTunnel(ctx context.Context, runtimeRoot string) error {
 	goruntime.LockOSThread()
 	defer goruntime.UnlockOSThread()
 
-	runtime, err := loadTunnelRuntime(runtimeRoot)
+	runtime, err := loadTunnelRuntime(ctx, runtimeRoot)
 	if err != nil {
 		return err
 	}
+	// Tailcat 由核心进程监听，不准备 cloudflared。none 直接返回。
 	if runtime.mode == "none" || runtime.mode == "tailcat" {
 		return nil
+	}
+	if err := prepareCloudflaredRuntime(ctx, &runtime); err != nil {
+		return err
 	}
 
 	guard, err := acquireTunnelSupervisor(runtime.root)
@@ -72,12 +76,15 @@ func platformLaunchTunnel(ctx context.Context, runtimeRoot string) error {
 		}
 
 		// 每轮重读 mode/token 等运行状态，避免 supervisor 长驻后继续使用过期配置。
-		runtime, err = loadTunnelRuntime(runtime.root)
+		runtime, err = loadTunnelRuntime(ctx, runtime.root)
 		if err != nil {
 			return err
 		}
 		if runtime.mode == "none" || runtime.mode == "tailcat" {
 			return nil
+		}
+		if err := prepareCloudflaredRuntime(ctx, &runtime); err != nil {
+			return err
 		}
 
 		startedAt := time.Now()
@@ -153,16 +160,22 @@ func runCloudflaredOnce(ctx context.Context, runtime tunnelRuntime, logs *proces
 }
 
 func platformTunnelStatus(ctx context.Context, runtimeRoot string) (TunnelStatus, error) {
-	runtime, err := loadTunnelRuntime(runtimeRoot)
+	runtime, err := loadTunnelRuntime(ctx, runtimeRoot)
 	if err != nil {
 		return TunnelStatus{}, err
 	}
+	// Tailcat 不读取 cloudflared 组件。缺组件不能把拨入状态报成失败。
 	if runtime.mode == "tailcat" {
 		return tailcatTunnelStatus(runtime.root), nil
 	}
-	running, err := processRunningAtPath(runtime.manifest.CloudflaredBinary)
-	if err != nil {
-		return TunnelStatus{}, err
+	componentStatus := cloudflaredComponentStatus(runtime.root)
+	running := false
+	if runtime.mode != "none" && componentStatus.Ready {
+		runtime.manifest.CloudflaredBinary = componentStatus.Path
+		running, err = processRunningAtPath(componentStatus.Path)
+		if err != nil {
+			return TunnelStatus{}, err
+		}
 	}
 	startupEnabled, err := tunnelAutostartEnabled(runtime.manifest)
 	if err != nil {
@@ -180,16 +193,18 @@ func platformTunnelStatus(ctx context.Context, runtimeRoot string) (TunnelStatus
 		ready = running && publicURL != ""
 	}
 	return TunnelStatus{
-		Mode:           runtime.mode,
-		Running:        running,
-		Ready:          ready,
-		StartupEnabled: startupEnabled,
-		PublicURL:      publicURL,
+		Mode:             runtime.mode,
+		Running:          running,
+		Ready:            ready,
+		StartupEnabled:   startupEnabled,
+		PublicURL:        publicURL,
+		DependencyState:  componentStatus.State,
+		ComponentVersion: componentStatus.Version,
 	}, nil
 }
 
 func platformTunnelAction(ctx context.Context, runtimeRoot, action string) error {
-	runtime, err := loadTunnelRuntime(runtimeRoot)
+	runtime, err := loadTunnelRuntime(ctx, runtimeRoot)
 	if err != nil {
 		return err
 	}
@@ -243,8 +258,10 @@ func startTunnel(ctx context.Context, runtime tunnelRuntime) error {
 	if runtime.mode == "none" || runtime.mode == "tailcat" {
 		return nil
 	}
-	if info, err := os.Stat(runtime.manifest.CloudflaredBinary); err != nil || info.IsDir() {
-		return fmt.Errorf("找不到 cloudflared.exe，请运行 Setup.exe 修复安装: %s", runtime.manifest.CloudflaredBinary)
+	if strings.TrimSpace(runtime.manifest.CloudflaredBinary) == "" {
+		if err := prepareCloudflaredRuntime(ctx, &runtime); err != nil {
+			return err
+		}
 	}
 
 	running, err := processRunningAtPath(runtime.manifest.CloudflaredBinary)
@@ -311,8 +328,10 @@ func stopTunnel(ctx context.Context, runtime tunnelRuntime) error {
 	if err := signalTunnelSupervisorStop(runtime.root); err != nil {
 		return err
 	}
-	if err := StopBinaryProcesses(ctx, runtime.manifest.CloudflaredBinary, 15*time.Second); err != nil {
-		return fmt.Errorf("停止 cloudflared 失败: %w", err)
+	for _, path := range cloudflaredStopCandidates(runtime) {
+		if err := StopBinaryProcesses(ctx, path, 15*time.Second); err != nil {
+			return fmt.Errorf("停止 cloudflared 失败 (%s): %w", path, err)
+		}
 	}
 	if err := waitTunnelSupervisorStopped(ctx, runtime.root, 15*time.Second); err != nil {
 		return err

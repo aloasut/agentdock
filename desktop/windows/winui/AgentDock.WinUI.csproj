@@ -1,0 +1,71 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>AgentDock.ControlPanel</RootNamespace>
+    <AssemblyName>agentdock-tray</AssemblyName>
+    <Product>AgentDock</Product>
+    <Company>AgentDock</Company>
+    <Copyright>Copyright AgentDock contributors</Copyright>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>../../../packaging/windows/assets/agentdock.ico</ApplicationIcon>
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <GenerateSatelliteAssembliesForCore>true</GenerateSatelliteAssembliesForCore>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 只引用实际使用的官方 Windows App SDK 组件，避免元包把 AI/ML/Widgets 等未使用功能带进发布物。 -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.1.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.1.3" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="2.0.21" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="2.0.13" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../../../packaging/assets/agentdock.png"
+             Link="Assets/agentdock.png"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../../packaging/windows/assets/agentdock.ico"
+             Link="agentdock.ico"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- WinUI 直接复用平台无关的 Runtime / Model / 资源实现。 -->
+    <Compile Include="../shared/UiText.cs" Link="Shared/UiText.cs" />
+    <Compile Include="../shared/Models/RuntimeModels.cs" Link="Shared/RuntimeModels.cs" />
+    <Compile Include="../shared/Services/RuntimeService.cs" Link="Shared/RuntimeService.cs" />
+    <Compile Include="../shared/Services/AcpAdapterResolver.cs" Link="Shared/AcpAdapterResolver.cs" />
+    <Compile Include="../shared/Services/ControlPanelDiagnostics.cs" Link="Shared/ControlPanelDiagnostics.cs" />
+    <Compile Include="../shared/Services/KillOnCloseJob.cs" Link="Shared/KillOnCloseJob.cs" />
+    <Compile Include="../shared/Services/TaskAdminService.cs" Link="Shared/TaskAdminService.cs" />
+    <EmbeddedResource Include="../shared/Resources/UiStrings.resx" Link="Resources/UiStrings.resx" />
+    <EmbeddedResource Include="../shared/Resources/UiStrings.zh-CN.resx" Link="Resources/UiStrings.zh-CN.resx" />
+  </ItemGroup>
+  <Target Name="CopyAgentDockWinUIResourcesToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_AgentDockWinUIPublishResource Include="$(TargetDir)*.xbf" />
+      <_AgentDockWinUIPublishResource Include="$(TargetDir)$(AssemblyName).pri" />
+    </ItemGroup>
+    <Error Condition="'@(_AgentDockWinUIPublishResource)' == ''"
+           Text="WinUI publish resources were not generated in $(TargetDir)." />
+    <Copy SourceFiles="@(_AgentDockWinUIPublishResource)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true" />
+    <Error Condition="!Exists('$(PublishDir)$(AssemblyName).pri')"
+           Text="WinUI publish is missing $(AssemblyName).pri." />
+    <Error Condition="!Exists('$(PublishDir)MainWindow.xbf')"
+           Text="WinUI publish is missing MainWindow.xbf." />
+  </Target>
+</Project>

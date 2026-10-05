@@ -13,9 +13,20 @@ import (
 )
 
 func platformConfigureTunnel(ctx context.Context, request TunnelConfigureRequest) error {
-	runtime, err := loadTunnelRuntime(request.RuntimeRoot)
+	runtime, err := loadTunnelRuntime(ctx, request.RuntimeRoot)
 	if err != nil {
 		return err
+	}
+	if request.Mode != "none" && request.Mode != "tailcat" {
+		// Tailcat 不使用 cloudflared。缺组件不能挡住拨入，也不能在配置前启动组件。
+		// none 是恢复路径，同样不需要依赖。quick 和 named 必须先证明组件可运行，
+		// 避免留下“配置已切换但 Tunnel 永远起不来”的半状态。
+		probe := runtime
+		probe.mode = request.Mode
+		if err := prepareCloudflaredRuntime(ctx, &probe); err != nil {
+			return err
+		}
+		runtime.manifest.CloudflaredBinary = probe.manifest.CloudflaredBinary
 	}
 	if err := ensureDesktopCredentials(runtime.root); err != nil {
 		return err

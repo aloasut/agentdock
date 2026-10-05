@@ -15,10 +15,58 @@ struct DesktopServiceStatusPayload: Decodable {
     }
 }
 
+struct RuntimeExtensionOverview: Equatable {
+    let available: Bool
+    let skillCount: Int
+    let pluginCount: Int
+    let pluginsAvailable: Bool
+    let mcpCount: Int
+
+    static let unavailable = RuntimeExtensionOverview(
+        available: false,
+        skillCount: 0,
+        pluginCount: 0,
+        pluginsAvailable: false,
+        mcpCount: 0
+    )
+}
+
+private struct RuntimeOverviewCountPayload: Decodable {
+    let count: Int
+}
+
+private struct RuntimeOverviewPluginsPayload: Decodable {
+    let count: Int
+    let available: Bool
+}
+
+private struct RuntimeOverviewPayload: Decodable {
+    let skills: RuntimeOverviewCountPayload
+    let plugins: RuntimeOverviewPluginsPayload
+    let mcp: RuntimeOverviewCountPayload
+}
+
 struct DesktopUpdateRegistrationState {
     let core: String
     let tunnel: String
 }
+
+struct CloudflaredComponentStatus: Decodable, Equatable {
+    let state: String
+    let installed: Bool
+    let ready: Bool
+    let version: String?
+    let detail: String?
+
+    static let unavailable = CloudflaredComponentStatus(
+        state: "broken",
+        installed: false,
+        ready: false,
+        version: nil,
+        detail: nil
+    )
+}
+
 
 enum NexusConnectionState: Equatable {
     case unconfigured
@@ -86,6 +134,160 @@ struct ServiceStatus {
     )
 }
 
+struct RuntimeDiagnosticCall: Decodable, Identifiable {
+    let id: String
+    let tool: String
+    let source: String
+    let startedAt: String
+    let durationMS: Double
+    let success: Bool
+    let errorCode: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, tool, source, success
+        case startedAt = "started_at"
+        case durationMS = "duration_ms"
+        case errorCode = "error_code"
+    }
+}
+
+struct RuntimeDiagnosticsPayload: Decodable {
+    let recentCalls: [RuntimeDiagnosticCall]
+
+    private enum CodingKeys: String, CodingKey {
+        case recentCalls = "recent_calls"
+    }
+}
+
+struct RuntimeAnalyticsStage: Decodable, Identifiable {
+    let name: String
+    let startedOffsetMS: Double
+    let durationMS: Double
+    let success: Bool
+
+    var id: String { "\(name)-\(startedOffsetMS)-\(durationMS)" }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, success
+        case startedOffsetMS = "started_offset_ms"
+        case durationMS = "duration_ms"
+    }
+}
+
+struct RuntimeAnalyticsCall: Decodable, Identifiable {
+    let id: UInt64
+    let tool: String
+    let source: String
+    let startedAt: String
+    let durationMS: Double
+    let success: Bool
+    let errorCode: String?
+    let errorCategory: String?
+    let stages: [RuntimeAnalyticsStage]
+
+    private enum CodingKeys: String, CodingKey {
+        case id, tool, source, success, stages
+        case startedAt = "started_at"
+        case durationMS = "duration_ms"
+        case errorCode = "error_code"
+        case errorCategory = "error_category"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UInt64.self, forKey: .id)
+        tool = try container.decode(String.self, forKey: .tool)
+        source = try container.decode(String.self, forKey: .source)
+        startedAt = try container.decode(String.self, forKey: .startedAt)
+        durationMS = try container.decode(Double.self, forKey: .durationMS)
+        success = try container.decode(Bool.self, forKey: .success)
+        errorCode = try container.decodeIfPresent(String.self, forKey: .errorCode)
+        errorCategory = try container.decodeIfPresent(String.self, forKey: .errorCategory)
+        stages = try container.decodeIfPresent([RuntimeAnalyticsStage].self, forKey: .stages) ?? []
+    }
+}
+
+struct RuntimeToolStats: Decodable, Identifiable {
+    let tool: String
+    let count: Int
+    let errorCount: Int
+    let errorRate: Double
+    let p50DurationMS: Double
+    let p95DurationMS: Double
+    let p99DurationMS: Double
+
+    var id: String { tool }
+
+    private enum CodingKeys: String, CodingKey {
+        case tool, count
+        case errorCount = "error_count"
+        case errorRate = "error_rate"
+        case p50DurationMS = "p50_duration_ms"
+        case p95DurationMS = "p95_duration_ms"
+        case p99DurationMS = "p99_duration_ms"
+    }
+}
+
+struct RuntimeProcessSnapshot: Decodable {
+    let goroutines: Int
+    let heapAllocBytes: UInt64
+    let heapInuseBytes: UInt64
+    let heapSysBytes: UInt64
+    let gcCycles: UInt32
+    let uptimeMS: Int64
+
+    private enum CodingKeys: String, CodingKey {
+        case goroutines
+        case heapAllocBytes = "heap_alloc_bytes"
+        case heapInuseBytes = "heap_inuse_bytes"
+        case heapSysBytes = "heap_sys_bytes"
+        case gcCycles = "gc_cycles"
+        case uptimeMS = "uptime_ms"
+    }
+}
+
+struct RuntimeAnalyticsPayload: Decodable {
+    let startedAt: String
+    let recentCapacity: Int
+    let windowCalls: Int
+    let totalCalls: UInt64
+    let totalErrors: UInt64
+    let activeCalls: Int
+    let toolStats: [RuntimeToolStats]
+    let recentCalls: [RuntimeAnalyticsCall]
+    let process: RuntimeProcessSnapshot
+
+    private enum CodingKeys: String, CodingKey {
+        case process
+        case startedAt = "started_at"
+        case recentCapacity = "recent_capacity"
+        case windowCalls = "window_calls"
+        case totalCalls = "total_calls"
+        case totalErrors = "total_errors"
+        case activeCalls = "active_calls"
+        case toolStats = "tool_stats"
+        case recentCalls = "recent_calls"
+    }
+}
+
+struct RuntimeDashboardSnapshot {
+    let countsAvailable: Bool
+    let diagnosticsAvailable: Bool
+    let skillCount: Int
+    let mcpCount: Int
+    let pluginCount: Int
+    let recentCalls: [RuntimeDiagnosticCall]
+
+    static let empty = RuntimeDashboardSnapshot(
+        countsAvailable: false,
+        diagnosticsAvailable: false,
+        skillCount: 0,
+        mcpCount: 0,
+        pluginCount: 0,
+        recentCalls: []
+    )
+}
+
 final class ServiceController: @unchecked Sendable {
     static let coreLabel = "com.uvwt.agentdock.core"
     static let tunnelLabel = "com.uvwt.agentdock.tunnel"
@@ -102,7 +304,6 @@ final class ServiceController: @unchecked Sendable {
         let fileManager = FileManager.default
         let migrationRequired = LegacyDesktopRuntimeMigration.isPresent(paths: paths)
         let installed = fileManager.isExecutableFile(atPath: paths.binary.path)
-            && fileManager.isExecutableFile(atPath: paths.cloudflared.path)
             && fileManager.fileExists(atPath: paths.coreSkillBundle.appendingPathComponent("manifest.json").path)
             && fileManager.fileExists(atPath: paths.environment.path)
         guard installed else { return .missing }
@@ -141,6 +342,41 @@ final class ServiceController: @unchecked Sendable {
             requiresApproval: requiresApproval,
             migrationRequired: migrationRequired,
             nexusConnection: .resolve(device: nexusDevice, connected: nexusConnected)
+        )
+    }
+
+    func dashboard(configuration: ServiceConfiguration?) async -> RuntimeDashboardSnapshot {
+        guard let configuration else { return .empty }
+
+        async let overviewTask: RuntimeOverviewPayload? = fetchRuntimePayload(
+            RuntimeOverviewPayload.self,
+            configuration: configuration,
+            path: "/internal/runtime/overview"
+        )
+        async let diagnosticsTask: RuntimeDiagnosticsPayload? = fetchRuntimePayload(
+            RuntimeDiagnosticsPayload.self,
+            configuration: configuration,
+            path: "/internal/runtime/diagnostics"
+        )
+        let overviewPayload = await overviewTask
+
+        let diagnosticsPayload = await diagnosticsTask
+        return RuntimeDashboardSnapshot(
+            countsAvailable: overviewPayload != nil,
+            diagnosticsAvailable: diagnosticsPayload != nil,
+            skillCount: overviewPayload?.skills.count ?? 0,
+            mcpCount: overviewPayload?.mcp.count ?? 0,
+            pluginCount: overviewPayload?.plugins.count ?? 0,
+            recentCalls: diagnosticsPayload?.recentCalls ?? []
+        )
+    }
+
+    func runtimeAnalytics(configuration: ServiceConfiguration?) async -> RuntimeAnalyticsPayload? {
+        guard let configuration else { return nil }
+        return await fetchRuntimePayload(
+            RuntimeAnalyticsPayload.self,
+            configuration: configuration,
+            path: "/internal/runtime/analytics"
         )
     }
 
@@ -185,6 +421,38 @@ final class ServiceController: @unchecked Sendable {
         NexusDeviceStatus.load(from: paths.nexusDeviceIdentity)
     }
 
+    func runtimeExtensionOverview(configuration: ServiceConfiguration?) async -> RuntimeExtensionOverview {
+        guard let configuration,
+              let healthURL = configuration.healthURL,
+              var components = URLComponents(url: healthURL, resolvingAgainstBaseURL: false) else {
+            return .unavailable
+        }
+        components.path = "/internal/runtime/overview"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url else { return .unavailable }
+
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 2.5
+            if !configuration.authToken.isEmpty {
+                request.setValue("Bearer \(configuration.authToken)", forHTTPHeaderField: "Authorization")
+            }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return .unavailable }
+            let payload = try JSONDecoder().decode(RuntimeOverviewPayload.self, from: data)
+            return RuntimeExtensionOverview(
+                available: true,
+                skillCount: max(0, payload.skills.count),
+                pluginCount: max(0, payload.plugins.count),
+                pluginsAvailable: payload.plugins.available,
+                mcpCount: max(0, payload.mcp.count)
+            )
+        } catch {
+            return .unavailable
+        }
+    }
+
     func pairNexus(endpoint: String, pairingCode: String) async throws {
         let endpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let pairingCode = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -226,10 +494,176 @@ final class ServiceController: @unchecked Sendable {
             .lowercased() ?? ""
     }
 
+
+    func cloudflaredComponentStatus() async -> CloudflaredComponentStatus {
+        do {
+            let result = try await runInBackground {
+                try runProcess(
+                    executable: self.paths.binary.path,
+                    arguments: [
+                        "component", "status", "cloudflared",
+                        "--runtime-root", self.paths.appSupport.path,
+                        "--json",
+                    ]
+                )
+            }
+            guard result.status == 0,
+                  let data = result.output.data(using: .utf8),
+                  let status = try? JSONDecoder().decode(CloudflaredComponentStatus.self, from: data) else {
+                return .unavailable
+            }
+            return status
+        } catch {
+            return .unavailable
+        }
+    }
+
+    func migrateLegacyCloudflaredIfNeeded(source: URL?, required: Bool) async throws {
+        let current = await cloudflaredComponentStatus()
+        guard !current.ready, required else { return }
+        guard let source else {
+            throw ValidationError(L10n.text("Cloudflare Tunnel is configured, but its optional component is missing. Repair the component before updating AgentDock."))
+        }
+        let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw ValidationError(L10n.text("Cloudflare Tunnel is configured, but the legacy component cannot be migrated safely."))
+        }
+        let result = try await runInBackground {
+            try runProcess(
+                executable: self.paths.binary.path,
+                arguments: [
+                    "component", "__import-legacy", "cloudflared",
+                    "--runtime-root", self.paths.appSupport.path,
+                    "--source", source.path,
+                    "--json",
+                ]
+            )
+        }
+        guard result.status == 0 else {
+            throw ValidationError(L10n.text("Cloudflare Tunnel component migration failed. The AgentDock update was not committed."))
+        }
+        let migrated = await cloudflaredComponentStatus()
+        guard migrated.ready else {
+            throw ValidationError(L10n.text("Cloudflare Tunnel component migration did not produce a ready component."))
+        }
+    }
+
+    func installCloudflaredComponent() async throws -> CloudflaredComponentStatus {
+        try await runCloudflaredComponentAction("install")
+    }
+
+    func updateCloudflaredComponent() async throws -> CloudflaredComponentStatus {
+        try await runCloudflaredComponentAction("update")
+    }
+
+    func uninstallCloudflaredComponent() async throws -> CloudflaredComponentStatus {
+        let mode = try configuredTunnelMode()
+        // 卸掉 cloudflared 只收回 quick/named。Tailcat 和 LAN 不依赖这个组件。
+        if mode == .quick || mode == .named {
+            try setTunnelEnabled(false)
+            try await configureTunnel(mode: .local, serverURL: "", tunnelToken: "")
+        }
+        return try await runCloudflaredComponentAction("uninstall")
+    }
+
+    func configureTunnel(mode: TunnelMode, serverURL: String, tunnelToken: String) async throws {
+        // Tailcat 与 LAN 不启动 cloudflared，也不能因为组件缺失而拒绝配置。
+        let needsCloudflared = mode == .quick || mode == .named
+        if needsCloudflared {
+            let component = await cloudflaredComponentStatus()
+            guard component.ready else {
+                throw ValidationError(L10n.text("Install the Cloudflare Tunnel component first."))
+            }
+        }
+
+        let wasEnabled = tunnelEnabled()
+        if wasEnabled {
+            try setTunnelEnabled(false)
+        }
+
+        let tokenFile = try writeTemporaryTunnelToken(tunnelToken)
+        defer {
+            if let tokenFile { try? FileManager.default.removeItem(at: tokenFile) }
+        }
+
+        var arguments = [
+            "tunnel", "configure",
+            "--runtime-root", paths.appSupport.path,
+            "--mode", mode.rawValue,
+            "--server-url", serverURL,
+        ]
+        if let tokenFile {
+            arguments += ["--token-file", tokenFile.path]
+        }
+
+        do {
+            let result = try await runInBackground {
+                try runProcess(executable: self.paths.binary.path, arguments: arguments)
+            }
+            guard result.status == 0 else {
+                throw ValidationError(commandError(result.output, action: L10n.text("Tunnel configuration")))
+            }
+            if needsCloudflared {
+                try setTunnelEnabled(true)
+            } else if mode == .tailcat || mode == .lan {
+                try setTunnelEnabled(false)
+            }
+        } catch {
+            if wasEnabled {
+                try? setTunnelEnabled(true)
+            }
+            throw error
+        }
+    }
+
+    func configuredNamedTunnelOrigin() -> String {
+        let path = paths.appSupport.appendingPathComponent("named-server-url.txt")
+        guard let data = try? Data(contentsOf: path),
+              let value = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return ""
+        }
+        return value
+    }
+
+    private func runCloudflaredComponentAction(_ action: String) async throws -> CloudflaredComponentStatus {
+        let result = try await runInBackground {
+            try runProcess(
+                executable: self.paths.binary.path,
+                arguments: [
+                    "component", action, "cloudflared",
+                    "--runtime-root", self.paths.appSupport.path,
+                    "--json",
+                ]
+            )
+        }
+        guard result.status == 0 else {
+            throw ValidationError(L10n.text("Cloudflare Tunnel component operation failed. Check diagnostics and try again."))
+        }
+        guard let data = result.output.data(using: .utf8),
+              let status = try? JSONDecoder().decode(CloudflaredComponentStatus.self, from: data) else {
+            throw ValidationError(L10n.text("Unable to read Cloudflare Tunnel component status."))
+        }
+        return status
+    }
+
+    private func writeTemporaryTunnelToken(_ token: String) throws -> URL? {
+        let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return nil }
+        guard !token.contains("\n"), !token.contains("\r") else {
+            throw ValidationError(L10n.text("Tunnel Token must be a single line of text."))
+        }
+        try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
+        let url = paths.appSupport.appendingPathComponent(".tunnel-token.\(UUID().uuidString)")
+        try Data((token + "\n").utf8).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return url
+    }
+
     func configuredTunnelMode() throws -> TunnelMode {
         switch try configuredTunnelModeRaw() {
-        case "tailcat", "quick":
-            // 已保存的 quick 只在界面上显示为 Tailcat。真正改写成 tailcat 发生在用户应用配置时。
+        case "quick":
+            return .quick
+        case "tailcat":
             return .tailcat
         case "named":
             return .named
@@ -264,6 +698,28 @@ final class ServiceController: @unchecked Sendable {
         guard result.status == 0 else {
             throw ValidationError(commandError(result.output, action: L10n.text("Reset connection string")))
         }
+    }
+
+    func configureTailcat(portText: String, allowText: String) async throws {
+        let validated = try TailcatPanel.validate(portText: portText, allowText: allowText)
+        let result = try await runInBackground {
+            try runProcess(
+                executable: self.paths.binary.path,
+                arguments: [
+                    "tunnel", "configure",
+                    "--runtime-root", self.paths.appSupport.path,
+                    "--mode", TunnelMode.tailcat.rawValue,
+                    "--tailcat-port", String(validated.port),
+                    "--tailcat-allow", validated.allow.joined(separator: ","),
+                    "--tailcat-allow-set",
+                ]
+            )
+        }
+        guard result.status == 0 else {
+            throw ValidationError(commandError(result.output, action: L10n.text("Tailcat")))
+        }
+        // Tailcat 由核心进程监听。关掉 cloudflared 的开机注册，避免拨入时再拉起组件。
+        try setTunnelEnabled(false)
     }
 
     func setTunnelEnabled(_ enabled: Bool) throws {
@@ -412,6 +868,13 @@ final class ServiceController: @unchecked Sendable {
             coreEnabled: currentStatus.autostartEnabled,
             tunnelEnabled: tunnelEnabled()
         )
+        let configuredMode = (try? configuredTunnelMode()) ?? .local
+        // 只有 quick/named 或仍注册着 Tunnel 服务时，才要求迁入 cloudflared。
+        let needsCloudflared = configuredMode == .quick || configuredMode == .named
+        try await migrateLegacyCloudflaredIfNeeded(
+            source: paths.legacyBundledCloudflared,
+            required: needsCloudflared || serviceState.tunnelEnabled
+        )
         try serviceState.write(to: paths.updateServiceState)
 
         let output: String
@@ -480,20 +943,6 @@ final class ServiceController: @unchecked Sendable {
     func openConfiguration() {
         try? FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
         NSWorkspace.shared.open(paths.appSupport)
-    }
-
-    func openRuntimeAnalytics(configuration: ServiceConfiguration?) {
-        guard let localMCPURL = configuration?.localMCPURL,
-              var components = URLComponents(url: localMCPURL, resolvingAgainstBaseURL: false),
-              components.scheme == "http",
-              isLoopbackHost(components.host) else {
-            return
-        }
-        components.path = "/analytics"
-        components.query = nil
-        components.fragment = nil
-        guard let analyticsURL = components.url else { return }
-        NSWorkspace.shared.open(analyticsURL)
     }
 
     private func isLoopbackHost(_ host: String?) -> Bool {
@@ -750,6 +1199,36 @@ final class ServiceController: @unchecked Sendable {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
             return try JSONDecoder().decode(HealthPayload.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
+    private func fetchRuntimePayload<T: Decodable>(
+        _ type: T.Type,
+        configuration: ServiceConfiguration,
+        path: String
+    ) async -> T? {
+        guard let localMCPURL = configuration.localMCPURL,
+              var components = URLComponents(url: localMCPURL, resolvingAgainstBaseURL: false),
+              components.scheme == "http",
+              isLoopbackHost(components.host) else {
+            return nil
+        }
+        components.path = path
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url else { return nil }
+
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 2.5
+            if !configuration.authToken.isEmpty {
+                request.setValue("Bearer \(configuration.authToken)", forHTTPHeaderField: "Authorization")
+            }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return try JSONDecoder().decode(type, from: data)
         } catch {
             return nil
         }
